@@ -53,7 +53,7 @@ try {
     const env={SUPABASE_URL:`http://127.0.0.1:${gateway.address().port}`,SUPABASE_SECRET_KEY:key,SUPABASE_ALLOW_LOCAL_TEST:'1'};
     server=await startServer(dir,env);let cookie='';
     const request=(route,method='GET',body,auth=true)=>fetch(server.base+route,{method,headers:{...(auth&&cookie?{cookie}:{}),...(body?{'content-type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
-    const setup=await request('/api/setup','POST',{name:'Remote test owner',password:'test-only-password-123'});assert.equal(setup.status,201);cookie=setup.headers.get('set-cookie').split(';')[0];
+    const setup=await request('/api/setup','POST',{name:'Remote test owner',password:'review'});assert.equal(setup.status,201);cookie=setup.headers.get('set-cookie').split(';')[0];
     assert.equal((await request('/api/setup','POST',{name:'Other owner',password:'another-test-password'})).status,409);
     const project=await (await request('/api/projects','POST',{name:'Persistent project'})).json();assert.ok(project.id);
     await database.createAsset({id:'test-video',project_id:project.id,name:'Remote sample.mp4',filename:null,poster:'demo',size:0,duration:8,fps:25});
@@ -75,7 +75,7 @@ try {
     await server.stop();server=await startServer(dir,env);assert.deepEqual(await (await request('/api/projects')).json(),[]);
     assert.equal((await request('/api/logout','POST')).status,204);
     assert.equal((await request('/api/projects')).status,401);
-    assert.equal((await request('/api/login','POST',{password:'test-only-password-123'})).status,200);
+    assert.equal((await request('/api/login','POST',{password:'review'})).status,200);
     console.log('PASS: PostgreSQL/PostgREST schema repeatability, anonymous denial, owner sessions, project/asset counts, guest feedback, drawings, approvals, resolve, restart with erased local data, cascade deletion, and login');
   }finally{await new Promise(resolve=>gateway.close(resolve));}
 }finally{

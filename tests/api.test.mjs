@@ -13,7 +13,8 @@ test('Persistent video review workflow and guest access boundaries',async t=>{
     await t.test('workspace requires authentication; setup creates a persistent session',async()=>{
       assert.equal((await request('/api/projects', 'GET',null,false)).status,401);
       assert.equal((await request('/api/session')).status,200);
-      const response=await request('/api/setup','POST',{name:'Test reviewer',password:'a-test-password-123'});
+      assert.equal((await request('/api/setup','POST',{name:'Test reviewer',password:'short'})).status,400);
+      const response=await request('/api/setup','POST',{name:'Test reviewer',password:'review'});
       assert.equal(response.status,201);cookie=response.headers.get('set-cookie').split(';')[0];
       assert.ok(response.headers.get('set-cookie').includes('HttpOnly'));
       assert.equal((await request('/api/setup','POST',{name:'Other',password:'another-password'})).status,409);
@@ -81,7 +82,7 @@ test('Persistent video review workflow and guest access boundaries',async t=>{
       assert.equal((await request(`/api/assets/${uploaded.id}/share`,'DELETE')).status,204);
       for(const tail of ['','/comments','/video'])assert.equal((await request(`/api/reviews/${invitation.token}${tail}`,'GET',null,false)).status,404);
       assert.equal((await request('/api/logout','POST')).status,204);assert.equal((await request('/api/projects')).status,401);
-      const login=await request('/api/login','POST',{password:'a-test-password-123'},false);assert.equal(login.status,200);
+      const login=await request('/api/login','POST',{password:'review'},false);assert.equal(login.status,200);
     });
   }finally{await server.stop();rmSync(dir,{recursive:true,force:true});}
 });

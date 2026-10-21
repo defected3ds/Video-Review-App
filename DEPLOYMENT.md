@@ -38,7 +38,7 @@ Render provides `RENDER_EXTERNAL_URL`, which the app uses for the OAuth callback
 
 The container binds to `0.0.0.0` and Render's `PORT`. Set the health path to `/api/health`; in hosted mode it checks the database. Production refuses to start without Supabase, preventing accidental reliance on Render's ephemeral local filesystem.
 
-On first use, enter your name and choose the workspace password. There is no owner setup code. Once the first owner is created, setup closes and subsequent visits use the workspace password.
+On first use, enter your display name and choose a workspace password of at least 6 characters directly in the setup form. The name appears on the shared workspace profile and comments. Render environment variables do not set the workspace password. There is no owner setup code. Once the first owner is created, setup closes and subsequent visits use the workspace password.
 
 ## Google configuration — deferred until credentials are available
 

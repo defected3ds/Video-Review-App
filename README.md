@@ -13,7 +13,7 @@ npm run build
 npm start
 ```
 
-The server binds to `127.0.0.1:3001` by default. Open that address in a browser on the same machine. On first use, enter your name and choose a workspace password (at least 10 characters). This creates the owner account; there are no default credentials.
+The server binds to `127.0.0.1:3001` by default. Open that address in a browser on the same machine. On first use, enter your name and choose a workspace password (at least 6 characters). This creates the owner account; there are no default credentials.
 
 For frontend development, use `npm run dev` after installation and sample preparation. Vite serves the frontend on port 5173 and proxies API requests to port 3001. The development launcher stops both services together.
 
@@ -59,7 +59,7 @@ In local development, data is stored in ignored `.data/`: SQLite holds projects,
 | `APP_URL` | `RENDER_EXTERNAL_URL` | Public HTTPS origin for the OAuth callback. |
 | `TRUST_PROXY` | unset | Set to `1` only behind one trusted reverse proxy, so HTTPS sessions receive secure cookies. |
 
-First-run setup asks for your name and workspace password. Setup closes after the first owner is created. There is one shared team password in this prototype. Client names are self-reported, not verified identities. Production requires Supabase and never silently uses local SQLite when the external database fails.
+First-run setup asks for your display name and a workspace password of at least 6 characters. The name appears on the shared workspace profile and as the default comment author. Choose the password in the setup form; Render environment variables do not set the workspace password. Setup closes after the first owner is created. There is one shared team password in this prototype. Client names are self-reported, not verified identities. Production requires Supabase and never silently uses local SQLite when the external database fails.
 
 ## Supabase database
 

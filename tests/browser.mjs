@@ -17,7 +17,7 @@ try {
   assert.equal(await page.getByLabel('Owner setup code',{exact:true}).count(),0);
   assert.equal(await page.locator('.auth-card input[type="password"]').count(),1);
   await page.getByLabel('Your name',{exact:true}).fill('Anna');
-  await page.getByLabel('Workspace password').fill('browser-test-password');
+  await page.getByLabel('Workspace password').fill('review');
   await page.getByRole('button',{name:'Create workspace'}).click();
   await page.getByRole('button',{name:'Play video',exact:true}).waitFor();
   await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);

@@ -52,7 +52,7 @@ app.get('/api/session',async(req,res)=>res.json({maxUploadMB,authenticated:req.o
 app.post('/api/setup',async(req,res)=>{
   if ((await store.owner())) return fail(res,409,'Workspace is already configured. Sign in instead.');
   const {password,name}=req.body || {};
-  if(typeof password!=='string'||password.length<10||password.length>200||typeof name!=='string'||!name.trim()||name.length>80) return fail(res,400,'Enter your name and a workspace password of 10–200 characters.');
+  if(typeof password!=='string'||password.length<6||password.length>200||typeof name!=='string'||!name.trim()||name.length>80) return fail(res,400,'Enter your name and a workspace password of 6–200 characters.');
   const salt=randomBytes(16).toString('hex');
   await store.createOwner({name:name.trim(),salt,password_hash:scryptSync(password,salt,64).toString('hex')});
   await createSession(req,res); res.status(201).json({authenticated:true,name:name.trim(),maxUploadMB});
