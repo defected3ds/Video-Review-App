@@ -50,11 +50,11 @@ try {
     await database.saveConnection('oauth:test','updated-state',Date.now()+60000);
     assert.equal((await database.consumeConnection('oauth:test')).payload,'updated-state');
     assert.equal(await database.consumeConnection('oauth:test'),undefined);
-    const env={WORKSPACE_SETUP_TOKEN:'local-test-setup-code',SUPABASE_URL:`http://127.0.0.1:${gateway.address().port}`,SUPABASE_SECRET_KEY:key,SUPABASE_ALLOW_LOCAL_TEST:'1'};
+    const env={SUPABASE_URL:`http://127.0.0.1:${gateway.address().port}`,SUPABASE_SECRET_KEY:key,SUPABASE_ALLOW_LOCAL_TEST:'1'};
     server=await startServer(dir,env);let cookie='';
     const request=(route,method='GET',body,auth=true)=>fetch(server.base+route,{method,headers:{...(auth&&cookie?{cookie}:{}),...(body?{'content-type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
-    assert.equal((await request('/api/setup','POST',{name:'Attacker',password:'test-only-password-123'})).status,403);
-    const setup=await request('/api/setup','POST',{name:'Remote test owner',password:'test-only-password-123',setupCode:'local-test-setup-code'});assert.equal(setup.status,201);cookie=setup.headers.get('set-cookie').split(';')[0];
+    const setup=await request('/api/setup','POST',{name:'Remote test owner',password:'test-only-password-123'});assert.equal(setup.status,201);cookie=setup.headers.get('set-cookie').split(';')[0];
+    assert.equal((await request('/api/setup','POST',{name:'Other owner',password:'another-test-password'})).status,409);
     const project=await (await request('/api/projects','POST',{name:'Persistent project'})).json();assert.ok(project.id);
     await database.createAsset({id:'test-video',project_id:project.id,name:'Remote sample.mp4',filename:null,poster:'demo',size:0,duration:8,fps:25});
     const feedback={author:'Client',body:'Please fix this frame.',time:2,annotations:'[{"color":"#ff0000","points":[{"x":0.2,"y":0.3}]}]',hotspot:'{"x":0.4,"y":0.5}'};

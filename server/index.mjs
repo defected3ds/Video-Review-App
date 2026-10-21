@@ -22,7 +22,6 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 const publicAsset = ({ filename, poster, ...asset }) => ({ ...asset, hasPoster: Boolean(poster), demo: !filename, inDrive: Boolean(filename?.startsWith(drivePrefix)) });
 const serializeComment = row => ({ ...row, annotations: JSON.parse(row.annotations), hotspot: row.hotspot ? JSON.parse(row.hotspot) : null, resolved: Boolean(row.resolved) });
 const fail = (res, code, error) => res.status(code).json({ error });
-const setupProtected=store.remote||process.env.NODE_ENV==='production'||Boolean(process.env.WORKSPACE_SETUP_TOKEN);
 const app = express();
 if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
 app.disable('x-powered-by');
@@ -49,14 +48,10 @@ async function createSession(req,res) {
   res.cookie('pipelife_session',token,{httpOnly:true,sameSite:'strict',secure:req.secure,path:'/',maxAge:7*86400000});
 }
 app.get('/api/health',async(req,res)=>{if(store.remote)await store.owner();res.json({ok:true});});
-app.get('/api/session',async(req,res)=>res.json({maxUploadMB,setupTokenRequired:setupProtected,authenticated:req.owner,setupRequired:!(await store.owner()),name:req.owner?(await store.owner())?.name:null}));
+app.get('/api/session',async(req,res)=>res.json({maxUploadMB,authenticated:req.owner,setupRequired:!(await store.owner()),name:req.owner?(await store.owner())?.name:null}));
 app.post('/api/setup',async(req,res)=>{
   if ((await store.owner())) return fail(res,409,'Workspace is already configured. Sign in instead.');
-  const {password,name,setupCode}=req.body || {};
-  if(setupProtected){
-    if(!process.env.WORKSPACE_SETUP_TOKEN)return fail(res,503,'Workspace setup is disabled until the owner configures its setup code.');
-    if(typeof setupCode!=='string'||setupCode.length>256||!timingSafeEqual(createHash('sha256').update(setupCode).digest(),createHash('sha256').update(process.env.WORKSPACE_SETUP_TOKEN).digest()))return fail(res,403,'The owner setup code is incorrect.');
-  }
+  const {password,name}=req.body || {};
   if(typeof password!=='string'||password.length<10||password.length>200||typeof name!=='string'||!name.trim()||name.length>80) return fail(res,400,'Enter your name and a workspace password of 10–200 characters.');
   const salt=randomBytes(16).toString('hex');
   await store.createOwner({name:name.trim(),salt,password_hash:scryptSync(password,salt,64).toString('hex')});

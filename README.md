@@ -57,10 +57,9 @@ In local development, data is stored in ignored `.data/`: SQLite holds projects,
 | `GOOGLE_TOKEN_ENCRYPTION_KEY` | unset | Stable random value, at least 32 characters, for encrypted OAuth tokens/state. |
 | `GOOGLE_DRIVE_FOLDER_ID` | User-supplied folder ID | Folder for listing, imports, and site uploads. |
 | `APP_URL` | `RENDER_EXTERNAL_URL` | Public HTTPS origin for the OAuth callback. |
-| `WORKSPACE_SETUP_TOKEN` | unset | Private code required to configure a hosted workspace owner. |
 | `TRUST_PROXY` | unset | Set to `1` only behind one trusted reverse proxy, so HTTPS sessions receive secure cookies. |
 
-Hosted first-run setup requires the private `WORKSPACE_SETUP_TOKEN` code from Render, followed by choosing the team password. There is one shared team password in this prototype. Client names are self-reported, not verified identities. Keep the setup code private. Production requires Supabase and never silently uses local SQLite when the external database fails.
+First-run setup asks for your name and workspace password. Setup closes after the first owner is created. There is one shared team password in this prototype. Client names are self-reported, not verified identities. Production requires Supabase and never silently uses local SQLite when the external database fails.
 
 ## Supabase database
 
@@ -102,4 +101,4 @@ The sample clip is generated locally and is clearly labeled. It is not customer 
 
 The application URL is https://pipelife-video-review.onrender.com. The former static-site address forwards to this web service.
 
-Use the supplied `Dockerfile` and free-service `render.yaml` template. Read [DEPLOYMENT.md](DEPLOYMENT.md) for the existing service URL, secure owner setup, exact Google callback, deferred API configuration, and live checks. No paid resources have been provisioned. Local/tested behavior does not establish that the public Render service has received these changes.
+Use the supplied `Dockerfile` and free-service `render.yaml` template. Read [DEPLOYMENT.md](DEPLOYMENT.md) for the existing service URL, workspace setup, exact Google callback, deferred API configuration, and live checks. No paid resources have been provisioned. Local/tested behavior does not establish that the public Render service has received these changes.

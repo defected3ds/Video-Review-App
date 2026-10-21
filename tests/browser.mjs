@@ -13,6 +13,9 @@ try {
   const context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage();
   page.on('pageerror',error=>errors.push(error.message));
   await page.goto(server.base);
+  await page.getByLabel('Your name',{exact:true}).waitFor();
+  assert.equal(await page.getByLabel('Owner setup code',{exact:true}).count(),0);
+  assert.equal(await page.locator('.auth-card input[type="password"]').count(),1);
   await page.getByLabel('Your name',{exact:true}).fill('Anna');
   await page.getByLabel('Workspace password').fill('browser-test-password');
   await page.getByRole('button',{name:'Create workspace'}).click();

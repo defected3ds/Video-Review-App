@@ -29,7 +29,6 @@ The server's Supabase key must be a secret key or legacy service-role key, never
 | --- | --- |
 | `SUPABASE_URL` | `https://hxkssgllgpqcbgvqhqba.supabase.co` |
 | `SUPABASE_SECRET_KEY` | The server key saved securely by the user |
-| `WORKSPACE_SETUP_TOKEN` | A generated private setup code; the blueprint generates it automatically |
 | `GOOGLE_TOKEN_ENCRYPTION_KEY` | A stable random value of at least 32 characters; generated automatically by the blueprint |
 | `GOOGLE_DRIVE_FOLDER_ID` | `1banF1xuWc3kKjLCSIu4c7x26RSYr2Uhv` |
 | `GOOGLE_CLIENT_ID` | Add later from the Google OAuth web application |
@@ -39,7 +38,7 @@ Render provides `RENDER_EXTERNAL_URL`, which the app uses for the OAuth callback
 
 The container binds to `0.0.0.0` and Render's `PORT`. Set the health path to `/api/health`; in hosted mode it checks the database. Production refuses to start without Supabase, preventing accidental reliance on Render's ephemeral local filesystem.
 
-On first use, copy `WORKSPACE_SETUP_TOKEN` from Render into the app's **Owner setup code** field, then choose the team name/password. This prevents an unrelated visitor from claiming a newly launched workspace. The setup code is not needed for subsequent sign-ins.
+On first use, enter your name and choose the workspace password. There is no owner setup code. Once the first owner is created, setup closes and subsequent visits use the workspace password.
 
 ## Google configuration — deferred until credentials are available
 
