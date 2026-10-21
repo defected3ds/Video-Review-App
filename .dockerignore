@@ -1,0 +1,12 @@
+.git
+node_modules
+.data
+dist
+dist-offline
+test-results
+.env
+.env.*
+*.log
+tests
+README.md
+DEPLOYMENT.md

@@ -1,0 +1,19 @@
+# Free service template. Existing services can use the same Dockerfile/settings.
+# No paid database or disk is provisioned by this file.
+services:
+  - type: web
+    name: pipelife-video-review
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: SUPABASE_URL
+        value: https://hxkssgllgpqcbgvqhqba.supabase.co
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: WORKSPACE_SETUP_TOKEN
+        generateValue: true
+      - key: GOOGLE_TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        value: 1banF1xuWc3kKjLCSIu4c7x26RSYr2Uhv

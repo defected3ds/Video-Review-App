@@ -1,0 +1,32 @@
+{
+  "name": "pipelife-video-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "prepare:demo": "node scripts/prepare-demo.mjs",
+    "dev": "node scripts/dev.mjs",
+    "build": "vite build",
+    "build:demo": "npm run prepare:demo && node scripts/build-offline.mjs",
+    "start": "node server/index.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "node tests/browser.mjs",
+    "test:demo": "node tests/offline.mjs",
+    "test:supabase": "node tests/supabase.mjs",
+    "check:supabase": "node scripts/check-supabase.mjs"
+  },
+  "dependencies": {
+    "express": "^5.3.0",
+    "lucide-react": "^0.468.0",
+    "multer": "^2.4.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1",
+    "vite": "^8.3.5"
+  }
+}

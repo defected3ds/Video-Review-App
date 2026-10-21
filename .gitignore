@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.data/
+.env
+.env.*
+*.log
+public/demo.mp4
+test-results/
+dist-offline/
