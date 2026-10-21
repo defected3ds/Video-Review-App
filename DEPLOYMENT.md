@@ -2,7 +2,8 @@
 
 The user requires free hosting. No paid service, persistent Render disk, or paid database is provisioned by this repository.
 
-Target service supplied by the user: https://video-review-app-rryg.onrender.com
+Primary application: https://pipelife-video-review.onrender.com
+Legacy static address (redirect): https://video-review-app-rryg.onrender.com
 Supabase project: https://hxkssgllgpqcbgvqhqba.supabase.co
 Drive folder: https://drive.google.com/drive/folders/1banF1xuWc3kKjLCSIu4c7x26RSYr2Uhv
 
@@ -12,7 +13,7 @@ This app requires a Render **web service** with the Docker runtime. A Render sta
 
 The Google API credentials are deferred by the user. Without those credentials, the workspace can start and use its persistent metadata, but Google Drive upload/import stays unavailable. Add the connection table and credentials before connecting Drive.
 
-The source must be pushed to the repository's `main` branch and deployed before local changes appear online. Environment settings alone do not publish the application. Follow the live verification steps below after a deployment.
+The source is deployed from the repository's `main` branch. Environment settings alone do not publish code changes. Follow the live verification steps below after a deployment. The core Supabase schema was verified; the `pvr_connections` table still requires `supabase/drive.sql` when enabling Google Drive later.
 
 ## Database
 
@@ -46,7 +47,7 @@ On first use, copy `WORKSPACE_SETUP_TOKEN` from Render into the app's **Owner se
 2. Configure the OAuth consent screen. For an application in Testing mode, add the connecting Google account as a test user. Google's Testing mode can expire refresh grants after seven days; reconnecting then requires another consent flow.
 3. Create OAuth credentials of type **Web application**. Add this exact authorized redirect URI:
 
-   `https://video-review-app-rryg.onrender.com/api/drive/callback`
+   `https://pipelife-video-review.onrender.com/api/drive/callback`
 
 4. Add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in Render Environment settings. Ensure `GOOGLE_TOKEN_ENCRYPTION_KEY` is also configured. Save/redeploy.
 5. Sign into the app and choose **Connect Drive**. Approve the Google consent request using an account that can add files to the selected folder.

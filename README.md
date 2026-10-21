@@ -100,4 +100,6 @@ The sample clip is generated locally and is clearly labeled. It is not customer 
 
 ## Render deployment
 
+The application URL is https://pipelife-video-review.onrender.com. The former static-site address forwards to this web service.
+
 Use the supplied `Dockerfile` and free-service `render.yaml` template. Read [DEPLOYMENT.md](DEPLOYMENT.md) for the existing service URL, secure owner setup, exact Google callback, deferred API configuration, and live checks. No paid resources have been provisioned. Local/tested behavior does not establish that the public Render service has received these changes.
