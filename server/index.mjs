@@ -27,6 +27,10 @@ const r2Storage=new R2Storage(process.env.NODE_ENV==='test'&&process.env.R2_TEST
 const videoStorage=r2Storage.requested?r2Storage:b2Storage;
 const sourceStorage=filename=>filename?.startsWith(r2Prefix)?r2Storage:filename?.startsWith(b2Prefix)?b2Storage:null;
 const maxUploadMB=250;
+const sessionLifetime=60*60*1000;
+// Shorten pre-existing seven-day sessions once, without extending them on requests/restarts.
+await store.capSessions(Date.now()+sessionLifetime);
+const cookieValue=(req,name)=>req.get('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith(name+'='))?.slice(name.length+1);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const isReviewCopy=filename=>{const provider=sourceStorage(filename);if(!provider)return false;const ref=provider.reference(filename);return /-review\.(mp4|webm)$/.test(typeof ref==='string'?ref:ref.fileName);};
 const publicAsset = ({ filename, poster, ...asset }) => ({ ...asset, hasPoster: Boolean(poster), demo: !filename, inDrive: Boolean(filename?.startsWith(drivePrefix)), inB2: Boolean(filename?.startsWith(b2Prefix)),inR2:Boolean(filename?.startsWith(r2Prefix)),reviewCopy:isReviewCopy(filename) });
@@ -50,6 +54,7 @@ app.use(async(req,res,next) => {
   req.sessionHash = cookie ? hash(cookie) : null;
   const session=req.sessionHash?await store.session(req.sessionHash,Date.now()):null;
   req.owner = Boolean(session);
+  req.sessionExpiresAt=session?.expires_at||null;
   req.profile = session?.profile_id?await store.profile(session.profile_id):null;
   next();
 });
@@ -57,8 +62,9 @@ const requireOwner = (req,res,next) => req.owner ? next() : fail(res,401,'Sign i
 async function createSession(req,res,profileId=req.profile?.id||null) {
   const token = randomBytes(32).toString('hex');
   await store.clearSessions(Date.now());
-  await store.createSession(hash(token),Date.now()+7*86400000,profileId);
-  res.cookie('pipelife_session',token,{httpOnly:true,sameSite:'strict',secure:req.secure,path:'/',maxAge:7*86400000});
+  req.sessionExpiresAt=Date.now()+sessionLifetime;
+  await store.createSession(hash(token),req.sessionExpiresAt,profileId);
+  res.cookie('pipelife_session',token,{httpOnly:true,sameSite:'strict',secure:req.secure,path:'/',maxAge:sessionLifetime});
 }
 app.get('/api/health',async(req,res)=>{if(store.remote)await store.owner();res.json({ok:true});});
 const profilesReady=()=>store.profilesReady?store.profilesReady():true;
@@ -69,7 +75,7 @@ async function findOrCreateProfile(name){
   if(!profile){const value={id:randomUUID(),nickname:name,nickname_key:key};try{await store.createProfile(value);}catch(error){if(error.status!==409)throw error;}profile=await store.profileByKey(key);}
   await store.touchProfile(profile.id,new Date().toISOString());return profile;
 }
-app.get('/api/session',async(req,res)=>{const owner=await store.owner();res.json({maxUploadMB,profilesEnabled:await profilesReady(),authenticated:req.owner,setupRequired:!owner,name:req.owner?(req.profile?.nickname||owner?.name):null,profileId:req.owner?req.profile?.id||null:null});});
+app.get('/api/session',async(req,res)=>{const owner=await store.owner();res.json({maxUploadMB,profilesEnabled:await profilesReady(),authenticated:req.owner,expiresAt:req.sessionExpiresAt,serverTime:Date.now(),setupRequired:!owner,name:req.owner?(req.profile?.nickname||owner?.name):null,profileId:req.owner?req.profile?.id||null:null});});
 app.get('/api/people',requireOwner,async(req,res)=>{if(!await profilesReady())return fail(res,503,profileSetupMessage);res.json(await store.profiles());});
 app.post('/api/setup',async(req,res)=>{
   if ((await store.owner())) return fail(res,409,'Workspace is already configured. Sign in instead.');
@@ -77,7 +83,7 @@ app.post('/api/setup',async(req,res)=>{
   if(typeof password!=='string'||password.length<6||password.length>200||typeof name!=='string'||!name.trim()||name.length>80) return fail(res,400,'Enter your name and a workspace password of 6–200 characters.');
   const salt=randomBytes(16).toString('hex');
   await store.createOwner({name:name.trim(),salt,password_hash:scryptSync(password,salt,64).toString('hex')});
-  const enabled=await profilesReady(),profile=enabled?await findOrCreateProfile(name.trim()):null;await createSession(req,res,profile?.id); res.status(201).json({authenticated:true,profilesEnabled:enabled,name:profile?.nickname||name.trim(),profileId:profile?.id||null,maxUploadMB});
+  const enabled=await profilesReady(),profile=enabled?await findOrCreateProfile(name.trim()):null;await createSession(req,res,profile?.id); res.status(201).json({authenticated:true,expiresAt:req.sessionExpiresAt,serverTime:Date.now(),profilesEnabled:enabled,name:profile?.nickname||name.trim(),profileId:profile?.id||null,maxUploadMB});
 });
 const attempts=new Map();
 let credentialWork = Promise.resolve();
@@ -97,8 +103,8 @@ app.post('/api/login',async(req,res)=>withCredentialLock(async()=>{
   const name=typeof req.body?.nickname==='string'?req.body.nickname.trim():owner.name;
   if(!name||name.length>80)return fail(res,400,'Choose a nickname of 1–80 characters.');
   const enabled=await profilesReady();if(!enabled&&req.body.nickname)return fail(res,503,profileSetupMessage);
-  const profile=enabled?await findOrCreateProfile(name):null;
-  attempts.delete(key); await createSession(req,res,profile?.id); res.json({authenticated:true,profilesEnabled:enabled,name:profile?.nickname||owner.name,profileId:profile?.id||null,maxUploadMB});
+  const profile=enabled&&req.body.nickname!==undefined?await findOrCreateProfile(name):null;
+  attempts.delete(key); await createSession(req,res,profile?.id); res.json({authenticated:true,expiresAt:req.sessionExpiresAt,serverTime:Date.now(),profilesEnabled:enabled,name:profile?.nickname||owner.name,profileId:profile?.id||null,maxUploadMB});
 }));
 app.patch('/api/settings/profile',requireOwner,async(req,res)=>{
   const name=typeof req.body?.name==='string'?req.body.name.trim():'';
@@ -122,7 +128,7 @@ app.post('/api/settings/password',requireOwner,async(req,res)=>withCredentialLoc
   // Revoke sessions before changing credentials; no login can interleave here.
   await store.clearAllSessions();
   await store.updatePassword(salt,scryptSync(newPassword,salt,64).toString('hex'));
-  attempts.delete(key);await createSession(req,res);res.json({authenticated:true,profilesEnabled:await profilesReady(),name:req.profile?.nickname||owner.name,profileId:req.profile?.id||null,maxUploadMB});
+  attempts.delete(key);await createSession(req,res);res.json({authenticated:true,expiresAt:req.sessionExpiresAt,serverTime:Date.now(),profilesEnabled:await profilesReady(),name:req.profile?.nickname||owner.name,profileId:req.profile?.id||null,maxUploadMB});
 }));
 app.post('/api/logout',async(req,res)=>{
   const cookie=req.get('cookie')?.split(';').map(v=>v.trim()).find(v=>v.startsWith('pipelife_session='))?.slice(17);
@@ -287,7 +293,7 @@ const changeStatus=async(req,res)=>{
 };
 const playbackStatus=(req,res)=>{const issue=req.asset.filename?.startsWith(b2Prefix)?b2Storage.playbackIssue(req.asset.filename):null;res.json({available:!issue,...issue});};
 const serveVideo=async(req,res)=>{
-  if(req.asset.filename?.startsWith(r2Prefix)){if(req.get('range')&&!/^bytes=\d*-\d*$/.test(req.get('range')))return res.status(416).end();const playback=await r2Storage.playback(req.asset.filename);return res.redirect(307,playback.url);}
+  if(req.asset.filename?.startsWith(r2Prefix)){if(req.get('range')&&!/^bytes=\d*-\d*$/.test(req.get('range')))return res.status(416).end();const remaining=Math.floor(((req.owner?req.sessionExpiresAt:req.reviewSession?.expires_at)-Date.now())/1000);if(remaining<1)return fail(res,401,'Your session has expired. Enter the shared password again.');const playback=await r2Storage.playback(req.asset.filename,Math.min(300,remaining));return res.redirect(307,playback.url);}
   if(req.asset.filename?.startsWith(b2Prefix))return proxyMedia(signal=>b2Storage.media(req.asset.filename,{range:req.get('range'),signal}),req,res,req.asset.name.toLowerCase().endsWith('.webm')?'video/webm':'video/mp4');
   if(req.asset.filename?.startsWith(drivePrefix))return proxyMedia(signal=>drive.media(req.asset.filename.slice(drivePrefix.length),{range:req.get('range'),signal}),req,res,req.asset.name.toLowerCase().endsWith('.webm')?'video/webm':'video/mp4');
   const filename=req.asset.filename?path.join(uploads,req.asset.filename):path.join(root,'public','demo.mp4');
@@ -322,11 +328,34 @@ assetRouter.patch('/:assetId/comments/:commentId',async(req,res)=>{
 });
 app.use('/api/assets',requireOwner,assetRouter);
 const guest=express.Router({mergeParams:true});
+const reviewCookiePath=req=>`/api/reviews/${encodeURIComponent(req.params.token)}`;
+const reviewSessionKey=(req,token)=>`review:${hash(req.params.token)}:${hash(token)}`;
 guest.use(async(req,res,next)=>{
   const review=await store.review(hash(req.params.token),Date.now());
   if(!review)return fail(res,404,'This invitation has expired or been revoked. Ask the team for a new link.');
-  req.asset=await store.asset(review.asset_id);next();
+  req.asset=await store.asset(review.asset_id);
+  if(!req.asset)return fail(res,404,'This video is no longer available.');
+  const token=cookieValue(req,'pipelife_review_session');
+  req.reviewSession=token?await store.session(reviewSessionKey(req,token),Date.now()):null;
+  next();
 });
+guest.get('/session',(req,res)=>res.json({authenticated:Boolean(req.owner||req.reviewSession),setupRequired:false,expiresAt:req.owner?req.sessionExpiresAt:req.reviewSession?.expires_at||null,serverTime:Date.now(),maxUploadMB}));
+guest.post('/login',async(req,res)=>withCredentialLock(async()=>{
+  const now=Date.now(),key=req.ip,previous=attempts.get(key),attempt=previous&&previous.reset>now?previous:{count:0,reset:now+15*60000};attempts.set(key,attempt);
+  if(++attempt.count>10)return fail(res,429,'Too many attempts. Try again in 15 minutes.');
+  if(!passwordMatches(await store.owner(),req.body?.password))return fail(res,401,'The workspace password is incorrect.');
+  const old=cookieValue(req,'pipelife_review_session');if(old)await store.deleteSession(reviewSessionKey(req,old));
+  const token=randomBytes(32).toString('hex'),expiresAt=Date.now()+sessionLifetime;
+  await store.clearSessions(Date.now());await store.createSession(reviewSessionKey(req,token),expiresAt);
+  res.cookie('pipelife_review_session',token,{httpOnly:true,sameSite:'strict',secure:req.secure,path:reviewCookiePath(req),maxAge:sessionLifetime});
+  attempts.delete(key);res.json({authenticated:true,setupRequired:false,expiresAt,serverTime:Date.now(),maxUploadMB});
+}));
+guest.post('/logout',async(req,res)=>{
+  const token=cookieValue(req,'pipelife_review_session');if(token)await store.deleteSession(reviewSessionKey(req,token));
+  if(req.sessionHash)await store.deleteSession(req.sessionHash);
+  res.clearCookie('pipelife_review_session',{path:reviewCookiePath(req)});res.clearCookie('pipelife_session',{path:'/'});res.status(204).end();
+});
+guest.use((req,res,next)=>req.owner||req.reviewSession?next():fail(res,401,'Enter the shared password to open this review.'));
 guest.get('/',async(req,res)=>res.json({asset:publicAsset(req.asset),project:await store.project(req.asset.project_id)}));
 guest.get('/playback-status',playbackStatus);guest.get('/video',serveVideo);guest.get('/poster',servePoster);guest.get('/comments',listComments);guest.post('/comments',addComment);guest.patch('/status',changeStatus);
 app.use('/api/reviews/:token',guest);

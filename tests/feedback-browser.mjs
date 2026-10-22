@@ -11,7 +11,7 @@ const errors=[],bytes=readFileSync(path.join(root,'public/demo.mp4'));
 try{
   const context=await browser.newContext({viewport:{width:1366,height:768}}),page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
   await context.request.post(server.base+'/api/setup',{data:{name:'Anna',password:'review'}});
-  await page.goto(server.base);await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);
+  await page.goto(server.base);await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);await page.getByLabel('Your name',{exact:true}).fill('Anna');
   async function draw(x=.1,y=.1){await page.locator('.video-stage').scrollIntoViewIfNeeded();await page.waitForFunction(()=>{const a=document.querySelector('.video-overlay').getBoundingClientRect(),b=document.querySelector('.video-stage').getBoundingClientRect();return a.width<=b.width+1&&a.height<=b.height+1;});const box=await page.locator('.video-overlay').boundingBox();await page.mouse.move(box.x+box.width*x,box.y+box.height*y);await page.mouse.down();await page.mouse.move(box.x+box.width*(x+.12),box.y+box.height*(y+.12),{steps:10});await page.mouse.up();try{await page.locator('.drawing-editor').waitFor({timeout:5000});}catch(e){await page.screenshot({path:path.join(root,'test-results/drawing-failure.png'),fullPage:true});console.log(await page.evaluate(()=>({tool:document.querySelector('.video-overlay').className,drafts:document.querySelectorAll('.drawing-draft').length,time:document.querySelector('video').currentTime,overlay:document.querySelector('.video-overlay').getBoundingClientRect().toJSON(),stage:document.querySelector('.video-stage').getBoundingClientRect().toJSON(),popup:document.querySelector('.drawing-editor')?.outerHTML})));throw e;}}
   const editor=page.locator('.drawing-editor'),drafts=page.locator('article.drawing-draft');
   await page.getByLabel('Video timeline').press('Home');await page.getByRole('button',{name:'Pencil',exact:true}).click();
@@ -54,7 +54,7 @@ try{
   console.log('PASS: independent strokes at the same/different frames, mirrored explanations, emoji, accept/delete, failure recovery, persisted popup and mobile bounds');
   // Guest shared links show the accepted explanation and allow their own drawings.
   const share=await (await context.request.post(server.base+'/api/assets/demo/share')).json(),guest=await browser.newContext(),client=await guest.newPage();
-  await client.goto(server.base+'/?review='+share.token);await client.getByRole('button',{name:'First independent drawing👍',exact:true}).click();await client.locator('.saved-drawing p').filter({hasText:'First independent drawing👍'}).waitFor();
+  await client.goto(server.base+'/?review='+share.token);await client.getByLabel('Workspace password',{exact:true}).fill('review');await client.getByRole('button',{name:'Sign in',exact:true}).click();await client.getByRole('button',{name:'First independent drawing👍',exact:true}).click();await client.locator('.saved-drawing p').filter({hasText:'First independent drawing👍'}).waitFor();
   assert.equal(await client.getByRole('button',{name:/Delete video/}).count(),0);await guest.close();
   // Drop target and file picker use the same upload path and reject invalid/multiple files.
   await page.getByRole('button',{name:'New project',exact:true}).click();await page.getByLabel('Project name').fill('Drag and drop');await page.getByRole('button',{name:'Create project',exact:true}).click();await page.getByRole('heading',{name:'Your next review starts here'}).waitFor();

@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { BackblazeStorage, freeStorageBytes } from '../server/b2.mjs';
-import { startServer, root } from './helpers.mjs';
+import { startServer, root ,createReviewGuest} from './helpers.mjs';
 
 test('Backblaze uploads, free limits, and private owner/guest playback', async t => {
   const dir = mkdtempSync(path.join(tmpdir(), 'pvr-b2-')), video = readFileSync(path.join(root, 'public/demo.mp4'));
@@ -58,7 +58,8 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
   });
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
   const env = { B2_KEY_ID: 'test-key-id', B2_APPLICATION_KEY: 'test-key-secret', B2_BUCKET_ID: bucketId, MOCK_B2_URL: `http://127.0.0.1:${provider.address().port}`, NODE_OPTIONS: `--import=${path.join(root, 'tests/b2-fetch-preload.mjs')}` };
-  const request = (route, method = 'GET', body, auth = true, headers = {}) => fetch(server.base + route, { method, headers: { ...(auth && cookie ? { cookie } : {}), ...(body && !(body instanceof FormData) ? { 'content-type': 'application/json' } : {}), ...headers }, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
+  const guestHeaders=createReviewGuest(()=>server.base);
+  const request = async(route, method = 'GET', body, auth = true, headers = {}) => fetch(server.base + route, { method, headers: { ...(auth && cookie ? { cookie } : !auth ? await guestHeaders(route) : {}), ...(body && !(body instanceof FormData) ? { 'content-type': 'application/json' } : {}), ...headers }, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
   const upload = project => { const form = new FormData(); form.append('video', new Blob([video], { type: 'video/mp4' }), 'Review.mp4'); return request(`/api/projects/${project}/assets`, 'POST', form); };
   let asset, invitation, storedVideo;
   try {

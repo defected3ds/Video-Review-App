@@ -7,7 +7,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {R2Storage,r2MaxBytes} from '../server/r2.mjs';
-import {startServer,root} from './helpers.mjs';
+import {startServer,root,createReviewGuest} from './helpers.mjs';
 
 const accessKey='fixture-r2-access-key',secret='fixture-r2-secret-never-used-remotely',accountId='a'.repeat(32),bucket='review-videos';
 const encode=value=>encodeURIComponent(value).replace(/[!'()*]/g,c=>'%'+c.charCodeAt(0).toString(16).toUpperCase());
@@ -72,7 +72,8 @@ test('R2 signed uploads, direct owner/guest playback, quotas and legacy migratio
   await new Promise(resolve=>provider.listen(0,'127.0.0.1',resolve));
   const endpoint=`http://127.0.0.1:${provider.address().port}`;
   const env={R2_ACCOUNT_ID:accountId,R2_ACCESS_KEY_ID:accessKey,R2_SECRET_ACCESS_KEY:secret,R2_BUCKET_NAME:bucket,R2_TEST_ENDPOINT:endpoint,B2_KEY_ID:'legacy-key',B2_APPLICATION_KEY:'legacy-secret',B2_BUCKET_ID:'legacy-bucket',MOCK_B2_URL:endpoint,NODE_OPTIONS:`--import=${path.join(root,'tests/b2-fetch-preload.mjs')}`};
-  const request=(route,method='GET',body,auth=true,options={})=>fetch(server.base+route,{method,headers:{...(auth&&cookie?{cookie}:{}),...(body&&!(body instanceof FormData)?{'content-type':'application/json'}:{}),...options.headers},body:body instanceof FormData?body:body?JSON.stringify(body):undefined,...(options.redirect?{redirect:options.redirect}:{})});
+  const guestHeaders=createReviewGuest(()=>server.base);
+  const request=async(route,method='GET',body,auth=true,options={})=>fetch(server.base+route,{method,headers:{...(auth&&cookie?{cookie}:!auth?await guestHeaders(route):{}),...(body&&!(body instanceof FormData)?{'content-type':'application/json'}:{}),...options.headers},body:body instanceof FormData?body:body?JSON.stringify(body):undefined,...(options.redirect?{redirect:options.redirect}:{})});
   const upload=project=>{const form=new FormData();form.append('video',new Blob([video],{type:'video/mp4'}),'Review.mp4');return request('/api/projects/'+project+'/assets','POST',form);};
   let asset,invite;
   try{

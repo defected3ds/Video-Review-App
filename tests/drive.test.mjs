@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startServer,root } from './helpers.mjs';
+import { startServer,root ,createReviewGuest} from './helpers.mjs';
 
 test('Site uploads and imports use Google Drive with private streaming',async t=>{
   const dir=mkdtempSync(path.join(tmpdir(),'pvr-drive-')),video=readFileSync(path.join(root,'public/demo.mp4'));
@@ -47,7 +47,8 @@ test('Site uploads and imports use Google Drive with private streaming',async t=
   });
   await new Promise(resolve=>provider.listen(0,'127.0.0.1',resolve));
   const env={GOOGLE_CLIENT_ID:'test-client',GOOGLE_CLIENT_SECRET:'test-client-secret',GOOGLE_TOKEN_ENCRYPTION_KEY:'test-only-encryption-key-at-least-32-characters',GOOGLE_DRIVE_FOLDER_ID:folder,APP_URL:'http://127.0.0.1:4000',DRIVE_ALLOW_LOCAL_TEST:'1',MOCK_DRIVE_URL:`http://127.0.0.1:${provider.address().port}`,NODE_OPTIONS:`--import=${path.join(root,'tests/drive-fetch-preload.mjs')}`};
-  const request=(route,method='GET',body,auth=true,headers={})=>fetch(server.base+route,{method,headers:{...(auth&&cookie?{cookie}:{}),...(body&&!(body instanceof FormData)?{'content-type':'application/json'}:{}),...headers},body:body instanceof FormData?body:body?JSON.stringify(body):undefined,redirect:'manual'});
+  const guestHeaders=createReviewGuest(()=>server.base,'a-test-password-123');
+  const request=async(route,method='GET',body,auth=true,headers={})=>fetch(server.base+route,{method,headers:{...(auth&&cookie?{cookie}:!auth?await guestHeaders(route):{}),...(body&&!(body instanceof FormData)?{'content-type':'application/json'}:{}),...headers},body:body instanceof FormData?body:body?JSON.stringify(body):undefined,redirect:'manual'});
   let asset,invitation;
   try{
     server=await startServer(dir,env);

@@ -63,10 +63,11 @@ export class R2Storage{
       return r2Prefix+Buffer.from(key).toString('base64url');
     }finally{release();}
   }
-  async playback(reference){
+  async playback(reference,lifetime=playbackLifetime){
     this.ready();const key=this.reference(reference);
-    const url=await getSignedUrl(this.client,new GetObjectCommand({Bucket:this.bucket,Key:key,ResponseCacheControl:'private, no-store'}),{expiresIn:playbackLifetime});
-    return{url,expiresAt:Date.now()+playbackLifetime*1000};
+    lifetime=Math.max(1,Math.min(playbackLifetime,Math.floor(lifetime)));
+    const url=await getSignedUrl(this.client,new GetObjectCommand({Bucket:this.bucket,Key:key,ResponseCacheControl:'private, no-store'}),{expiresIn:lifetime});
+    return{url,expiresAt:Date.now()+lifetime*1000};
   }
   async media(reference,{range,signal}={}){
     const value=await this.send(new GetObjectCommand({Bucket:this.bucket,Key:this.reference(reference),...(range?{Range:range}:{})}),{signal});

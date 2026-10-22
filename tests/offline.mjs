@@ -15,6 +15,7 @@ try {
  page.on('pageerror',e=>errors.push(e.message));page.on('request',req=>{if(/\/api\//.test(req.url()))apiRequests.push(req.url());});
  await page.goto(`http://127.0.0.1:${server.address().port}/`);
  await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);
+ await page.getByLabel('Your name',{exact:true}).fill('Reviewer');
  await context.setOffline(true);
  await page.getByRole('button',{name:'Play video',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('video').currentTime>.2);

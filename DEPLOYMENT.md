@@ -73,11 +73,11 @@ Keep the existing `SUPABASE_URL` and server-only `SUPABASE_SECRET_KEY`. Core `pv
 
 The container binds to `0.0.0.0` and Render's `PORT`. `/api/health` checks database access. Render's free filesystem is temporary, so hosted uploads never silently fall back to local storage.
 
-Initial workspace setup requires a display name and a password of at least six characters, chosen in the app. The name is the shared workspace profile/default comment author. Environment variables do not set or reset this password. There is no owner setup code. Existing owner credentials and review data must be preserved.
+Initial workspace setup requires a display name and a password of at least six characters, chosen in the app. The setup name identifies the initial owner; ordinary sign-in asks only for the shared password, and each browser chooses a commenter name separately. Environment variables do not set or reset this password. There is no owner setup code. Existing owner credentials and review data must be preserved.
 
 ## Administration
 
-https://pipelife-video-review.onrender.com/admin uses the existing workspace password and session. Password settings use the existing tables. Nickname profiles require the separate additive `supabase/profiles.sql` migration; until applied, existing password-only sign-in remains available. The R2 storage switch itself does not require new tables. Password changes require the current password, revoke other team sessions, and keep client review links valid. Storage status, quota usage, and provider/server management links live here. Real provider secrets remain in Render Environment; the admin page never receives or displays them. Anyone using the shared team password has access to this page; individual admin/team roles are not implemented.
+https://pipelife-video-review.onrender.com/admin uses the existing workspace password and session. Password settings use the existing tables. Nickname profiles require the separate additive `supabase/profiles.sql` migration; until applied, existing password-only sign-in remains available. The R2 storage switch itself does not require new tables. All sign-in sessions, including shared-review sessions, last one hour with a server-enforced expiry. Shared video links require the password and grant only that review. Password changes revoke existing sessions; client links stay valid but need the new password. Storage status, quota usage, and provider/server management links live here. Real provider secrets remain in Render Environment; the admin page never receives or displays them. Anyone using the shared team password has access to this page; individual admin/team roles are not implemented.
 
 ## Live verification
 

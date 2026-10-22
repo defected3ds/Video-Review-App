@@ -6,7 +6,7 @@ import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { supabaseDatabase } from '../server/database.mjs';
-import { startServer } from './helpers.mjs';
+import { startServer ,createReviewGuest} from './helpers.mjs';
 
 const suffix=randomBytes(5).toString('hex'), network=`pvr-test-${suffix}`, pg=`pvr-pg-${suffix}`, rest=`pvr-rest-${suffix}`;
 const dir=mkdtempSync(path.join(tmpdir(),'pvr-remote-'));
@@ -54,7 +54,8 @@ try {
     assert.equal(await database.consumeConnection('oauth:test'),undefined);
     const env={SUPABASE_URL:`http://127.0.0.1:${gateway.address().port}`,SUPABASE_SECRET_KEY:key,SUPABASE_ALLOW_LOCAL_TEST:'1'};
     server=await startServer(dir,env);let cookie='';
-    const request=(route,method='GET',body,auth=true)=>fetch(server.base+route,{method,headers:{...(auth&&cookie?{cookie}:{}),...(body?{'content-type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+    const guestHeaders=createReviewGuest(()=>server.base);
+    const request=async(route,method='GET',body,auth=true)=>fetch(server.base+route,{method,headers:{...(auth&&cookie?{cookie}:!auth?await guestHeaders(route):{}),...(body?{'content-type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
     const setup=await request('/api/setup','POST',{name:'Remote test owner',password:'review'});assert.equal(setup.status,201);cookie=setup.headers.get('set-cookie').split(';')[0];
     assert.equal((await request('/api/setup','POST',{name:'Other owner',password:'another-test-password'})).status,409);
     const project=await (await request('/api/projects','POST',{name:'Persistent project'})).json();assert.ok(project.id);
@@ -119,7 +120,7 @@ try {
     assert.equal((await (await request('/api/session')).json()).name,'Remote admin');
     assert.equal((await request('/api/login','POST',{password:'review'},false)).status,401);
     assert.equal((await request('/api/login','POST',{password:'newpass'},false)).status,200);
-    assert.equal((await (await request('/api/people')).json()).length,2);
+    assert.equal((await (await request('/api/people')).json()).length,1);
     const newPerson=await request('/api/login','POST',{nickname:'Remote client',password:'newpass'},false);assert.equal(newPerson.status,200);const person=await newPerson.json();assert.equal(person.name,'Remote client');
     const returning=await (await request('/api/login','POST',{nickname:'REMOTE CLIENT',password:'newpass'},false)).json();assert.equal(returning.profileId,person.profileId);
     await server.stop();

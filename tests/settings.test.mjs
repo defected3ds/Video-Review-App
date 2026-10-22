@@ -36,7 +36,9 @@ test('Admin settings require the owner and persist profile/password changes with
       for (const revokedCookie of [oldCookie, otherCookie]) assert.equal((await request('/api/projects', 'GET', null, revokedCookie)).status, 401);
       assert.equal((await request('/api/projects')).status, 200);
       assert.equal((await request('/api/login', 'POST', { password: 'review' }, '')).status, 401);
-      assert.equal((await request('/api/reviews/' + invitation.token, 'GET', null, '')).status, 200);
+      assert.equal((await request('/api/reviews/' + invitation.token, 'GET', null, '')).status, 401);
+      const guestLogin=await request('/api/reviews/'+invitation.token+'/login','POST',{password:'newpass'},'');assert.equal(guestLogin.status,200);
+      assert.equal((await request('/api/reviews/'+invitation.token,'GET',null,guestLogin.headers.get('set-cookie').split(';')[0])).status,200);
     });
     await t.test('new credentials and profile survive restart', async () => {
       await server.stop(); server = await startServer(dir);

@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, CheckCircle2, ExternalLink, Folder, KeyRound, LoaderCircle, LogOut, Save, Settings, Users, UserRound } from 'lucide-react';
 import Brand from './Brand.jsx';
+import {commenterName,rememberCommenter} from './commenter.js';
 import { api, json } from './review-utils.js';
 
 export default function Admin({ session, onSession }) {
-  const [name, setName] = useState(session.name || '');
+  const [name, setName] = useState(()=>commenterName()||session.name||'');
   const [currentPassword, setCurrentPassword] = useState(''), [newPassword, setNewPassword] = useState(''), [confirmation, setConfirmation] = useState('');
   const [storage, setStorage] = useState(null), [storageBusy, setStorageBusy] = useState(false), [saving, setSaving] = useState('');
   const [people,setPeople]=useState(null),[videos,setVideos]=useState([]),[optimizing,setOptimizing]=useState('');
@@ -23,7 +24,7 @@ export default function Admin({ session, onSession }) {
   useEffect(() => { refreshStorage();refreshVideos();if(session.profilesEnabled!==false)refreshPeople(); }, []);
   async function saveProfile(event) {
     event.preventDefault(); setSaving('profile'); setError(''); setNotice('');
-    try { const profile = await api('/api/settings/profile', json('PATCH', { name })); onSession({ ...session, name: profile.name }); setName(profile.name);if(session.profilesEnabled!==false)await refreshPeople(); setNotice('Display name saved. New comments will use this name.'); }
+    try { const profile = await api('/api/settings/profile', json('PATCH', { name })); onSession({ ...session, name: profile.name }); setName(profile.name);rememberCommenter(profile.name);if(session.profilesEnabled!==false)await refreshPeople(); setNotice('Display name saved. New comments will use this name.'); }
     catch (e) { setError(e.message); } finally { setSaving(''); }
   }
   async function changePassword(event) {

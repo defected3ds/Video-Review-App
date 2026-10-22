@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startServer, root } from './helpers.mjs';
+import { startServer, root ,createReviewGuest} from './helpers.mjs';
 
 test('Persistent video review workflow and guest access boundaries',async t=>{
   const dir=mkdtempSync(path.join(tmpdir(),'pipelife-api-'));
   let server=await startServer(dir),cookie='',uploaded,comment,invitation;
-  const request=(route,method='GET',body,authenticated=true,headers={})=>fetch(server.base+route,{method,headers:{...(authenticated&&cookie?{cookie}:{}),...(body&&!(body instanceof FormData)?{'Content-Type':'application/json'}:{}),...headers},body:body instanceof FormData?body:body?JSON.stringify(body):undefined});
+  const guestHeaders=createReviewGuest(()=>server.base);
+  const request=async(route,method='GET',body,authenticated=true,headers={})=>fetch(server.base+route,{method,headers:{...(authenticated&&cookie?{cookie}:!authenticated?await guestHeaders(route):{}),...(body&&!(body instanceof FormData)?{'Content-Type':'application/json'}:{}),...headers},body:body instanceof FormData?body:body?JSON.stringify(body):undefined});
   try {
     await t.test('workspace requires authentication; setup creates a persistent session',async()=>{
       assert.equal((await request('/api/projects', 'GET',null,false)).status,401);

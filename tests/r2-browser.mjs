@@ -18,7 +18,7 @@ try{
   await page.route('**/api/projects/launch/assets',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{...asset,inR2:true,inB2:false,reviewCopy:true}])}));
   let issued=0;
   await page.route('**/api/assets/demo/video',route=>route.fulfill({status:307,headers:{location:`${cloudBase}/review.mp4?temporary-token=${++issued}`}}));
-  await page.goto(server.base);await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);assert.ok(cloudReads>0);
+  await page.goto(server.base);await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);await page.getByLabel('Your name',{exact:true}).fill('R2 Reviewer');assert.ok(cloudReads>0);
   await page.getByRole('button',{name:'Play video',exact:true}).click();await page.waitForFunction(()=>document.querySelector('video').currentTime>.2);await page.getByRole('button',{name:'Pause video',exact:true}).click();
   await page.locator('video').evaluate(el=>{el.currentTime=3;});await page.waitForFunction(()=>!document.querySelector('video').seeking&&Math.abs(document.querySelector('video').currentTime-3)<.05);
   await page.getByLabel('Comment',{exact:true}).fill('Preserve this frame and draft 👍');
@@ -32,7 +32,7 @@ try{
   const guest=await browser.newContext(),client=await guest.newPage();client.on('pageerror',e=>errors.push(e.message));
   await client.route('**/api/reviews/'+share.token,async route=>{const response=await route.fetch(),data=await response.json();data.asset.inR2=true;await route.fulfill({response,json:data});});
   await client.route('**/api/reviews/'+share.token+'/video',route=>route.fulfill({status:307,headers:{location:`${cloudBase}/shared.mp4?temporary-token=${++issued}`}}));
-  await client.goto(server.base+'/?review='+share.token);await client.waitForFunction(()=>document.querySelector('video')?.readyState>=2);await client.getByRole('button',{name:'Preserve this frame and draft 👍',exact:true}).waitFor();
+  await client.goto(server.base+'/?review='+share.token);await client.getByLabel('Workspace password',{exact:true}).fill('review');await client.getByRole('button',{name:'Sign in',exact:true}).click();await client.waitForFunction(()=>document.querySelector('video')?.readyState>=2);await client.getByRole('button',{name:'Preserve this frame and draft 👍',exact:true}).waitFor();
   await context.request.delete(server.base+'/api/assets/demo/share');await client.unroute('**/api/reviews/'+share.token+'/video');
   await client.evaluate(()=>{const original=Date.now.bind(Date);Date.now=()=>original()+360000;document.querySelector('video').dispatchEvent(new Event('error'));});
   await client.getByRole('alert').filter({hasText:'expired or been revoked'}).waitFor();await guest.close();

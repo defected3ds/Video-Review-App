@@ -1,0 +1,40 @@
+import {chromium} from 'playwright';
+import assert from 'node:assert/strict';
+import {mkdtempSync,existsSync,rmSync,mkdirSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {startServer,root} from './helpers.mjs';
+const dir=mkdtempSync(path.join(tmpdir(),'pvr-session-ui-')),server=await startServer(dir);
+const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE||(existsSync('/usr/bin/chromium')?'/usr/bin/chromium':undefined),args:['--no-sandbox']});
+const errors=[];
+try{
+  const seed=await browser.newContext();await seed.request.post(server.base+'/api/setup',{data:{name:'Owner',password:'shared-password'}});
+  const link=await (await seed.request.post(server.base+'/api/assets/demo/share')).json();
+  const context=await browser.newContext({viewport:{width:1366,height:768}}),page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.clock.install({time:new Date()});
+  await page.goto(server.base);await page.getByLabel('Workspace password',{exact:true}).waitFor();assert.equal(await page.locator('.app').count(),0);assert.equal(await page.locator('.auth-card input:not([type=password])').count(),0);
+  await page.getByLabel('Workspace password',{exact:true}).fill('shared-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);
+  assert.equal(await page.getByLabel('Your name',{exact:true}).inputValue(),'');await page.getByLabel('Your name',{exact:true}).fill('Alice');await page.getByLabel('Comment',{exact:true}).fill('Alice first comment');await page.getByRole('button',{name:'Send comment',exact:true}).click();await page.getByRole('button',{name:'Alice first comment',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Pencil',exact:true}).click();const box=await page.locator('.video-overlay').boundingBox();await page.mouse.move(box.x+box.width*.1,box.y+box.height*.1);await page.mouse.down();await page.mouse.move(box.x+box.width*.2,box.y+box.height*.2,{steps:8});await page.mouse.up();await page.getByLabel('Drawing explanation',{exact:true}).fill('Drawing draft to keep');await page.getByLabel('Comment',{exact:true}).fill('Comment draft to keep');
+  await page.clock.fastForward(3600001);await page.getByRole('heading',{name:'Session expired',exact:true}).waitFor();assert.equal(await page.locator('.app').isVisible(),false);assert.equal(await page.locator('video').evaluate(el=>el.paused),true);
+  await page.getByLabel('Workspace password',{exact:true}).fill('shared-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.app').waitFor({state:'visible'});
+  assert.equal(await page.getByLabel('Comment',{exact:true}).inputValue(),'Comment draft to keep');assert.equal(await page.getByLabel('Draft drawing explanation',{exact:true}).inputValue(),'Drawing draft to keep');assert.equal(await page.getByLabel('Your name',{exact:true}).inputValue(),'Alice');
+  await page.getByRole('button',{name:'Commenter profile',exact:true}).click();await page.getByLabel('Commenter display name',{exact:true}).fill('Alice Laptop');await page.getByRole('button',{name:'Save name',exact:true}).click();assert.equal(await page.getByLabel('Your name',{exact:true}).inputValue(),'Alice Laptop');
+  assert.equal(await page.locator('article.comment').filter({has:page.getByRole('button',{name:'Alice first comment',exact:true})}).locator('.comment-author strong').innerText(),'Alice');
+  page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByLabel('Workspace password',{exact:true}).waitFor();
+  await page.getByLabel('Workspace password',{exact:true}).fill('shared-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.getByRole('button',{name:'Play video',exact:true}).waitFor();assert.equal(await page.getByLabel('Your name',{exact:true}).inputValue(),'Alice Laptop');
+  assert.ok(!JSON.stringify(await page.evaluate(()=>Object.fromEntries(Object.entries(localStorage)))).includes('shared-password'));
+  console.log('PASS: password-only sign-in, first-comment identity, one-hour lock, paused playback, retained text/drawing drafts, change-name and remembered name after sign-out');
+  // A completely separate browser context models another computer with no cookies or remembered name.
+  const guest=await browser.newContext({viewport:{width:1280,height:800}}),client=await guest.newPage();client.on('pageerror',e=>errors.push(e.message));await client.clock.install({time:new Date()});
+  const protectedReads=[];client.on('request',request=>{if(/\/api\/reviews\/[^/]+\/(video|poster|comments)$/.test(request.url()))protectedReads.push(request.url());});
+  await client.goto(server.base+'/?review='+link.token);await client.getByLabel('Workspace password',{exact:true}).waitFor();assert.equal(await client.locator('.app').count(),0);assert.deepEqual(protectedReads,[]);
+  assert.equal((await guest.request.get(server.base+'/api/reviews/'+link.token+'/comments')).status(),401);
+  await client.getByLabel('Workspace password',{exact:true}).fill('incorrect');await client.getByRole('button',{name:'Sign in',exact:true}).click();await client.getByRole('alert').filter({hasText:'incorrect'}).waitFor();assert.equal(await client.locator('.app').count(),0);
+  await client.getByLabel('Workspace password',{exact:true}).fill('shared-password');await client.getByRole('button',{name:'Sign in',exact:true}).click();await client.getByRole('button',{name:'Alice first comment',exact:true}).waitFor();await client.waitForFunction(()=>document.querySelector('video')?.readyState>=2);
+  assert.equal((await guest.request.get(server.base+'/api/projects')).status(),401);assert.equal(await client.getByLabel('Your name',{exact:true}).inputValue(),'');
+  await client.getByLabel('Your name',{exact:true}).fill('Bob');await client.getByLabel('Comment',{exact:true}).fill('Bob first comment');await client.getByRole('button',{name:'Send comment',exact:true}).click();await client.getByRole('button',{name:'Bob first comment',exact:true}).waitFor();
+  await client.getByLabel('Comment',{exact:true}).fill('Guest draft to keep');await client.clock.fastForward(3600001);await client.getByRole('heading',{name:'Session expired',exact:true}).waitFor();assert.equal(await client.locator('.app').isVisible(),false);
+  await client.getByLabel('Workspace password',{exact:true}).fill('shared-password');await client.getByRole('button',{name:'Sign in',exact:true}).click();await client.locator('.app').waitFor({state:'visible'});assert.equal(await client.getByLabel('Comment',{exact:true}).inputValue(),'Guest draft to keep');assert.equal(await client.getByLabel('Your name',{exact:true}).inputValue(),'Bob');
+  mkdirSync(path.join(root,'test-results'),{recursive:true});await client.screenshot({path:path.join(root,'test-results/password-review.png'),fullPage:true});
+  assert.deepEqual(errors,[]);console.log('PASS: another computer requires password before metadata/media/comments, rejects wrong passwords, stays scoped, expires after one hour and remembers its commenter on re-entry');
+}finally{await browser.close();await server.stop();rmSync(dir,{recursive:true,force:true});}

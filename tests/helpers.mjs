@@ -14,3 +14,18 @@ export async function startServer(dataDir, overrides = {}) {
   });
   return {base,async stop(){if(child.exitCode!==null)return;const exit=once(child,'exit');child.kill('SIGTERM');await exit;}};
 }
+
+// Existing review workflow fixtures sign in as scoped guests, never as workspace owners.
+export function createReviewGuest(getBase,password='review') {
+  const cookies=new Map();
+  return async route=>{
+    const token=route.match(/^\/api\/reviews\/([^/?]+)/)?.[1];if(!token)return {};
+    if(!cookies.has(token)){
+      const response=await fetch(`${getBase()}/api/reviews/${token}/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password})});
+      if(response.status===404)return {};
+      if(!response.ok)throw new Error(`Review fixture sign-in failed (${response.status})`);
+      cookies.set(token,response.headers.get('set-cookie').split(';')[0]);
+    }
+    return {cookie:cookies.get(token)};
+  };
+}

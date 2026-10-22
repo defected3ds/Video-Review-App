@@ -4,11 +4,12 @@ import {mkdtempSync,readFileSync,readdirSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
-import {startServer,root} from './helpers.mjs';
+import {startServer,root,createReviewGuest} from './helpers.mjs';
 
 test('Moving a video preserves its media, feedback and guest links and only changes project membership',async()=>{
   const dir=mkdtempSync(path.join(tmpdir(),'pvr-move-'));let server=await startServer(dir),cookie='';
-  const request=(route,method='GET',body,auth=true)=>fetch(server.base+route,{method,headers:{...(auth&&cookie?{cookie}:{}),...(body&&!(body instanceof FormData)?{'content-type':'application/json'}:{})},body:body instanceof FormData?body:body?JSON.stringify(body):undefined});
+  const guestHeaders=createReviewGuest(()=>server.base);
+  const request=async(route,method='GET',body,auth=true)=>fetch(server.base+route,{method,headers:{...(auth&&cookie?{cookie}:!auth?await guestHeaders(route):{}),...(body&&!(body instanceof FormData)?{'content-type':'application/json'}:{})},body:body instanceof FormData?body:body?JSON.stringify(body):undefined});
   try{
     const setup=await request('/api/setup','POST',{name:'Move reviewer',password:'review'});cookie=setup.headers.get('set-cookie').split(';')[0];
     const bytes=readFileSync(path.join(root,'public/demo.mp4')),data=new FormData();data.append('video',new Blob([bytes]),'Original.mp4');
