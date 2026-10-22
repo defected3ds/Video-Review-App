@@ -1,72 +1,65 @@
-# Render deployment and Google Drive setup
-
-The user requires free hosting. No paid service, persistent Render disk, or paid database is provisioned by this repository.
+# Free Render deployment and video storage
 
 Primary application: https://pipelife-video-review.onrender.com
-Legacy static address (redirect): https://video-review-app-rryg.onrender.com
-Supabase project: https://hxkssgllgpqcbgvqhqba.supabase.co
-Drive folder: https://drive.google.com/drive/folders/1banF1xuWc3kKjLCSIu4c7x26RSYr2Uhv
 
-## Deployment notes
+Legacy address (redirect): https://video-review-app-rryg.onrender.com
 
-This app requires a Render **web service** with the Docker runtime. A Render static site can serve the JavaScript/CSS but cannot run the Express API, authentication, persistent comments, or upload handlers. If an older static-site URL exists, redirect it to the web service after verifying the web service is healthy.
+Supabase database: https://hxkssgllgpqcbgvqhqba.supabase.co
 
-The Google API credentials are deferred by the user. Without those credentials, the workspace can start and use its persistent metadata, but Google Drive upload/import stays unavailable. Add the connection table and credentials before connecting Drive.
+The chosen setup is Render free hosting, the existing Supabase database for review data, and Backblaze B2 for private video files. Google Drive is no longer required. No paid capacity or billing setup is authorized.
 
-The source is deployed from the repository's `main` branch. Environment settings alone do not publish code changes. Follow the live verification steps below after a deployment. The core Supabase schema was verified; the `pvr_connections` table still requires `supabase/drive.sql` when enabling Google Drive later.
+## Backblaze B2 setup
 
-## Database
+1. [Create a B2 Cloud Storage account](https://www.backblaze.com/sign-up/cloud-storage) without adding payment details. Use B2 Cloud Storage, not the Computer Backup trial. Backblaze advertises no credit card required and the first 10 GB of storage always free.
+2. In **B2 Cloud Storage → Buckets**, create a bucket with a unique name such as `pipelife-review-videos-yourname`. Select **Private**, not Public. Use the bucket only for this app. Copy its **Bucket ID** (not its name).
+3. In **Application Keys**, create a new application key. Restrict it to this one bucket, select **Read and Write**, and leave the filename prefix and expiration blank. Do not use the master application key. The app needs `listBuckets`, `listFiles`, `readFiles`, `writeFiles`, and `deleteFiles`; delete permission is used only to roll back an upload when saving its review record fails. It does not need permission to list all bucket names.
+4. In **Caps & Alerts**, set available monetary usage caps to **$0** and enable notifications. Do not add a payment method or enable paid features. Free storage, download, and API limits still apply; operations can stop when their free allowances are exhausted. If signup asks for mandatory payment details, stop rather than enable billing.
+5. Open [the existing Render service](https://dashboard.render.com/web/srv-dbcee89kjs5s739m3n9g) → **Environment** and add:
 
-Run `supabase/schema.sql` in the Supabase SQL Editor. For a project that ran an earlier version of the schema, `supabase/drive.sql` adds just the encrypted OAuth connection/state table. Both scripts can be rerun safely and do not alter unrelated application tables.
+   | Name | Value |
+   | --- | --- |
+   | `B2_KEY_ID` | The new application's **keyID** |
+   | `B2_APPLICATION_KEY` | The new **applicationKey**, displayed once |
+   | `B2_BUCKET_ID` | The private bucket's **Bucket ID** |
 
-The server's Supabase key must be a secret key or legacy service-role key, never a publishable/anon key. Keep it in Render Environment settings without a `VITE_` prefix. App tables have RLS and no browser-role access. Existing local SQLite data is not automatically migrated.
+   Keep these values out of chat, source control, browser code, and `VITE_` variables. Save and redeploy. The bucket/account must be created by its owner; the app cannot create the account or recover a lost application key.
+6. Sign into the app, open **Video storage**, and choose **Check connection**. It must say **Video storage connected**. Upload a short H.264 MP4 to verify real bucket access.
 
-## Render settings
+Sources checked October 22, 2026: [Backblaze pricing](https://www.backblaze.com/cloud-storage/pricing), [signup](https://www.backblaze.com/sign-up/cloud-storage), and [caps and alerts](https://www.backblaze.com/docs/cloud-storage-data-caps-and-alerts). Download and API allowances are separate from storage; 10 GB of storage is not unlimited video viewing. The pricing page describes free monthly egress up to three times average stored data, with additional restrictions/caps for non-paying accounts.
 
-`Dockerfile` supplies Node 24, FFmpeg, the compiled frontend, and the API. `render.yaml` is a free Docker service template; it creates no database or disk. For the existing service, configure the equivalent Docker deployment and environment settings. Do not create another service or enable paid capacity automatically.
+The app checks all versions in its private bucket and refuses an upload that would take that bucket above **10,000,000,000 bytes**. Upload checks/writes are serialized within this service. Backblaze's free allowance is **account-wide**: use a dedicated account/bucket and retain provider caps, because other buckets, external uploads, additional app instances, and download/API usage are outside the app's storage guard.
 
-| Name | Value |
-| --- | --- |
-| `SUPABASE_URL` | `https://hxkssgllgpqcbgvqhqba.supabase.co` |
-| `SUPABASE_SECRET_KEY` | The server key saved securely by the user |
-| `GOOGLE_TOKEN_ENCRYPTION_KEY` | A stable random value of at least 32 characters; generated automatically by the blueprint |
-| `GOOGLE_DRIVE_FOLDER_ID` | `1banF1xuWc3kKjLCSIu4c7x26RSYr2Uhv` |
-| `GOOGLE_CLIENT_ID` | Add later from the Google OAuth web application |
-| `GOOGLE_CLIENT_SECRET` | Add later from the Google OAuth web application |
+## What happens to videos
 
-Render provides `RENDER_EXTERNAL_URL`, which the app uses for the OAuth callback. If it is unavailable, set `APP_URL` to the service's exact HTTPS origin. Keep the encryption key stable across redeploys; changing it requires restoring the old key or reconnecting Drive.
+Files up to 250 MB are inspected before upload. The server checks the provider's returned size, SHA-1 checksum, bucket, and filename before creating the review record. Video/thumbnail temporary files are removed after success or failure. Supabase holds the review record and thumbnail; no persistent Render disk is required. If saving a record fails after a confirmed upload, the app attempts to remove only that new upload.
 
-The container binds to `0.0.0.0` and Render's `PORT`. Set the health path to `/api/health`; in hosted mode it checks the database. Production refuses to start without Supabase, preventing accidental reliance on Render's ephemeral local filesystem.
+The bucket stays private. Team sessions and scoped guest review links stream media through the app, including byte-range requests for seeking. Clients receive neither application keys nor Backblaze account tokens. The app uses current v4 account authorization and supports application keys restricted to one bucket.
 
-On first use, enter your display name and choose a workspace password of at least 6 characters directly in the setup form. The name appears on the shared workspace profile and comments. Render environment variables do not set the workspace password. There is no owner setup code. Once the first owner is created, setup closes and subsequent visits use the workspace password.
+Deleting a project removes review entries, comments, drawings, and invitation links. Cloud originals are preserved, as the confirmation dialog explains. Delete unused files and old versions in Backblaze to reclaim storage; files deleted directly there will no longer play in their reviews.
 
-## Google configuration — deferred until credentials are available
+## Render and Supabase
 
-1. In Google Cloud Console, select/create the project and enable the **Google Drive API**.
-2. Configure the OAuth consent screen. For an application in Testing mode, add the connecting Google account as a test user. Google's Testing mode can expire refresh grants after seven days; reconnecting then requires another consent flow.
-3. Create OAuth credentials of type **Web application**. Add this exact authorized redirect URI:
+Use the existing **free Docker web service**, not a static site. `Dockerfile` supplies Node 24, FFmpeg, compiled frontend, and the Express API. `render.yaml` provisions neither a database nor a paid disk. The source deploys from `main`. Do not create another service or enable paid capacity automatically.
 
-   `https://pipelife-video-review.onrender.com/api/drive/callback`
+Keep the existing `SUPABASE_URL` and server-only `SUPABASE_SECRET_KEY`. Core `pvr_` tables were verified in the real project. For a new Supabase project, run `supabase/schema.sql` through its SQL Editor. RLS denies browser access; the server uses a secret/service-role credential. SQLite records are not automatically migrated. Production refuses to start without Supabase.
 
-4. Add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in Render Environment settings. Ensure `GOOGLE_TOKEN_ENCRYPTION_KEY` is also configured. Save/redeploy.
-5. Sign into the app and choose **Connect Drive**. Approve the Google consent request using an account that can add files to the selected folder.
+The container binds to `0.0.0.0` and Render's `PORT`. `/api/health` checks database access. Render's free filesystem is temporary, so hosted uploads never silently fall back to local storage.
 
-The folder workflow requests the Google Drive scope to read existing videos and create uploads in that folder. The app limits listing/import/upload targets to `GOOGLE_DRIVE_FOLDER_ID`. OAuth state is single use, expires after ten minutes, and uses PKCE. Access/refresh tokens are encrypted in the server-only database and refreshed on the server. Review guests never receive Google credentials.
+Initial workspace setup requires a display name and a password of at least six characters, chosen in the app. The name is the shared workspace profile/default comment author. Environment variables do not set or reset this password. There is no owner setup code. Existing owner credentials and review data must be preserved.
 
-Uploads are inspected before being sent to Drive. Temporary local video/thumbnail files are removed after success. Thumbnails are retained with review metadata. New Drive files keep the folder's existing sharing policy; the app does not make them public. The server streams media to authorized team sessions or scoped review links, including byte-range requests for seeking.
+## Live verification
 
-Deleting a review project removes its app records and revokes its links; original videos remain in Google Drive. The app only removes a newly created Drive upload as rollback if saving that upload's review record fails.
+1. Confirm Render has deployed the new commit and `/api/health` returns `{"ok":true}`.
+2. Add real B2 credentials, check the connection, and upload a short MP4. Confirm it appears in the private bucket.
+3. Play and seek the video; post a frame comment with a hotspot and pencil drawing, then refresh.
+4. Open an invitation in another browser without a team session; verify playback, feedback, and approval.
+5. Redeploy and confirm the same projects, comments, and cloud video access persist.
+6. Revoke the test invitation; confirm guest metadata and media are denied. Delete the test project and remove its retained cloud video manually if no longer needed.
 
-## Live verification still required
+Local fixtures verify integration behavior but do not establish access to a real Backblaze account. Real upload verification remains pending until the owner supplies the bucket and application key.
 
-After the source is pushed and the service is deployed with real settings:
+## Legacy Google Drive (optional)
 
-1. Confirm `/api/health` returns `{"ok":true}`.
-2. Configure the owner and create a project.
-3. Connect Drive; upload a real MP4/WebM and confirm it appears in the selected folder.
-4. Play and seek it, post a frame comment/hotspot/drawing, and refresh.
-5. Open a review invitation in another browser without a team session; verify media, feedback, and approval.
-6. Redeploy and confirm projects/comments/video access persist.
-7. Revoke the link and confirm guest media access is denied. Delete a test project and confirm its Drive file is preserved.
+Existing Drive video references remain supported. When B2 is configured, new uploads use B2; an invalid B2 configuration returns an error instead of switching storage accounts. Without B2, a previously connected Drive account can still handle uploads. No files are automatically migrated.
 
-Free service limits, Drive quotas, Google consent configuration, and available Drive storage still apply. No exact current provider capacity or price is asserted here.
+If deliberately retaining Drive, run `supabase/drive.sql` to add `pvr_connections`, which was missing at the last real-project check. Keep the existing `GOOGLE_TOKEN_ENCRYPTION_KEY` stable. Configure `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_DRIVE_FOLDER_ID` as before. The exact OAuth callback is `https://pipelife-video-review.onrender.com/api/drive/callback`. Drive tokens stay encrypted server-side. No Google credentials or OAuth table are needed for Backblaze storage.

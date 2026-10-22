@@ -20,6 +20,13 @@ try {
   await page.getByLabel('Workspace password').fill('review');
   await page.getByRole('button',{name:'Create workspace'}).click();
   await page.getByRole('button',{name:'Play video',exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Connect Drive',exact:true}).count(),0);
+  await page.getByRole('button',{name:'Video storage',exact:true}).click();
+  await page.getByText('Connect your free video storage',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Check connection',exact:true}).click();
+  await page.getByText('Connect your free video storage',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Close dialog'}).click();
+  console.log('PASS: private video storage setup replaces the Google Drive connection prompt');
   await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);
   await page.getByRole('button',{name:'Play video',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('video').currentTime>.3);

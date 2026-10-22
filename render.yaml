@@ -11,7 +11,9 @@ services:
         value: https://hxkssgllgpqcbgvqhqba.supabase.co
       - key: SUPABASE_SECRET_KEY
         sync: false
-      - key: GOOGLE_TOKEN_ENCRYPTION_KEY
-        generateValue: true
-      - key: GOOGLE_DRIVE_FOLDER_ID
-        value: 1banF1xuWc3kKjLCSIu4c7x26RSYr2Uhv
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APPLICATION_KEY
+        sync: false
+      - key: B2_BUCKET_ID
+        sync: false

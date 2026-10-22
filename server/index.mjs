@@ -4,6 +4,7 @@ import { localDatabase, supabaseDatabase } from './database.mjs';
 import { mkdirSync, existsSync, unlinkSync, readFileSync } from 'node:fs';
 import { proxyMedia } from './media.mjs';
 import { GoogleDrive, drivePrefix, inlinePosterPrefix } from './drive.mjs';
+import { BackblazeStorage, b2Prefix } from './b2.mjs';
 import path from 'node:path';
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -17,9 +18,10 @@ const uploads = path.join(data, 'uploads');
 mkdirSync(uploads, { recursive: true });
 const store = process.env.SUPABASE_URL ? supabaseDatabase({url:process.env.SUPABASE_URL,key:process.env.SUPABASE_SECRET_KEY,allowLocal:process.env.SUPABASE_ALLOW_LOCAL_TEST==='1'}) : localDatabase(data);
 const drive=new GoogleDrive(store,{allowLocal:process.env.DRIVE_ALLOW_LOCAL_TEST==='1'});
+const videoStorage=new BackblazeStorage();
 const maxUploadMB=250;
 const hash = value => createHash('sha256').update(value).digest('hex');
-const publicAsset = ({ filename, poster, ...asset }) => ({ ...asset, hasPoster: Boolean(poster), demo: !filename, inDrive: Boolean(filename?.startsWith(drivePrefix)) });
+const publicAsset = ({ filename, poster, ...asset }) => ({ ...asset, hasPoster: Boolean(poster), demo: !filename, inDrive: Boolean(filename?.startsWith(drivePrefix)), inB2: Boolean(filename?.startsWith(b2Prefix)) });
 const serializeComment = row => ({ ...row, annotations: JSON.parse(row.annotations), hotspot: row.hotspot ? JSON.parse(row.hotspot) : null, resolved: Boolean(row.resolved) });
 const fail = (res, code, error) => res.status(code).json({ error });
 const app = express();
@@ -94,7 +96,7 @@ app.get('/api/projects/:id/assets',async(req,res)=>{
 });
 const upload=multer({dest:uploads,limits:{fileSize:maxUploadMB*1024*1024,files:1},fileFilter:(req,file,cb)=>cb(null,/\.(mp4|webm)$/i.test(file.originalname))});
 app.post('/api/projects/:id/assets',async(req,res,next)=>{
-  if(store.remote&&!(await drive.status()).connected)return fail(res,503,'Connect Google Drive before uploading a video.');
+  if(store.remote&&!videoStorage.configured&&!(await drive.status()).connected)return fail(res,503,'Connect Backblaze B2 video storage before uploading. Open Video storage for setup instructions.');
   if(!(await store.project(req.params.id)))return fail(res,404,'Project not found.');next();
 },upload.single('video'),async(req,res,next)=>{
   if(!req.file)return fail(res,400,`Choose an MP4 or WebM video up to ${maxUploadMB} MB.`);
@@ -109,8 +111,14 @@ app.post('/api/projects/:id/assets',async(req,res,next)=>{
     await promisify(execFile)('ffmpeg',['-nostdin','-v','error','-i',req.file.path,'-frames:v','1','-vf','scale=640:-2','-y',path.join(uploads,poster)],{timeout:20000});
     const [n,d]=metadata.streams[0].avg_frame_rate.split('/').map(Number);
     let filename=req.file.filename,posterRef=poster;
-    const connected=(await drive.status()).connected;
-    if(connected){
+    const connected=!videoStorage.configured&&(await drive.status()).connected;
+    if(videoStorage.configured){
+      filename=await videoStorage.upload(req.file.path,`pvr/${req.params.id}/${id}${path.extname(req.file.originalname).toLowerCase()}`,path.extname(req.file.originalname).toLowerCase()==='.webm'?'video/webm':'video/mp4',req.file.size);
+      posterRef=`${inlinePosterPrefix}${readFileSync(path.join(uploads,poster)).toString('base64')}`;
+      try{await store.createAsset({id,project_id:req.params.id,name:path.basename(req.file.originalname).slice(0,200),filename,size:req.file.size,duration:Number(metadata.format.duration),fps:Number.isFinite(n/d)&&n/d>0?n/d:25,poster:posterRef});}
+      catch(error){await videoStorage.remove(filename).catch(()=>{});throw error;}
+      for(const file of [req.file.path,path.join(uploads,poster)])if(existsSync(file))unlinkSync(file);
+    }else if(connected){
       const uploaded=await drive.upload(req.file.path,path.basename(req.file.originalname).slice(0,200),path.extname(req.file.originalname).toLowerCase()==='.webm'?'video/webm':'video/mp4',req.file.size);
       filename=`${drivePrefix}${uploaded.id}`;
       posterRef=`${inlinePosterPrefix}${readFileSync(path.join(uploads,poster)).toString('base64')}`;
@@ -118,12 +126,13 @@ app.post('/api/projects/:id/assets',async(req,res,next)=>{
       catch(error){await drive.removeNewUpload(uploaded.id).catch(()=>{});throw error;}
       for(const file of [req.file.path,path.join(uploads,poster)])if(existsSync(file))unlinkSync(file);
     }else{
-      if(store.remote)throw Object.assign(new Error('Connect Google Drive before uploading a video.'),{status:503,publicMessage:'Connect Google Drive before uploading a video.'});
+      if(store.remote)throw Object.assign(new Error('Connect Backblaze B2 video storage before uploading.'),{status:503,publicMessage:'Connect Backblaze B2 video storage before uploading.'});
       await store.createAsset({id,project_id:req.params.id,name:path.basename(req.file.originalname).slice(0,200),filename,size:req.file.size,duration:Number(metadata.format.duration),fps:Number.isFinite(n/d)&&n/d>0?n/d:25,poster:posterRef});
     }
     res.status(201).json({...publicAsset(await store.asset(id)),comment_count:0});
   }catch(error){for(const file of [req.file.path,path.join(uploads,poster)])if(existsSync(file))unlinkSync(file);next(error);}
 });
+app.get('/api/storage/status',requireOwner,async(req,res)=>res.json(await videoStorage.status()));
 // Drive authorization is owner-only. The callback uses a one-time, expiring state
 // plus PKCE; it does not rely on cookies being sent from Google's origin.
 app.get('/api/drive/status',requireOwner,async(req,res)=>res.json(await drive.status()));
@@ -167,6 +176,7 @@ const changeStatus=async(req,res)=>{
   await store.status(req.asset.id,req.body.status);res.json({...publicAsset(req.asset),status:req.body.status});
 };
 const serveVideo=async(req,res)=>{
+  if(req.asset.filename?.startsWith(b2Prefix))return proxyMedia(signal=>videoStorage.media(req.asset.filename,{range:req.get('range'),signal}),req,res,req.asset.name.toLowerCase().endsWith('.webm')?'video/webm':'video/mp4');
   if(req.asset.filename?.startsWith(drivePrefix))return proxyMedia(signal=>drive.media(req.asset.filename.slice(drivePrefix.length),{range:req.get('range'),signal}),req,res,req.asset.name.toLowerCase().endsWith('.webm')?'video/webm':'video/mp4');
   const filename=req.asset.filename?path.join(uploads,req.asset.filename):path.join(root,'public','demo.mp4');
   if(!existsSync(filename))return fail(res,404,'Video is unavailable. Run npm run prepare:demo to restore the sample.');

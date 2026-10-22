@@ -31,8 +31,8 @@ The demo supports local MP4/WebM playback, hotspots, pencil markup, comments, re
 
 ### Hosted application
 
-1. Create a project or use the sample campaign. **Delete project** opens a confirmation dialog; confirming removes its app video entries, comments, drawings, and invitation links. Files already stored in Google Drive remain there. Deleted projects stay deleted after restarting the app.
-2. Connect Google Drive, then upload an MP4 or WebM video, up to 250 MB. On the hosted site, uploads go into the configured Google Drive folder. You can also import an existing video from that folder. Local development without a Drive connection retains its local upload mode. Browser-compatible H.264, VP8, VP9, and AV1 video streams are accepted. Files are inspected and a thumbnail is generated before they appear in the project. H.264 MP4 is the most broadly compatible choice.
+1. Create a project or use the sample campaign. **Delete project** opens a confirmation dialog; confirming removes its app video entries, comments, drawings, and invitation links. Cloud video originals remain in their storage account; remove unused files in Backblaze to reclaim free storage. Deleted projects stay deleted after restarting the app.
+2. Configure Backblaze B2, then upload an MP4 or WebM video, up to 250 MB. Hosted uploads go to your private bucket, with a 10 GB bucket limit checked before each upload. No Google account is required. Local development without cloud storage retains its local upload mode. Existing Drive connections and videos remain supported for earlier workspaces; configured Backblaze storage takes precedence for new uploads. Browser-compatible H.264, VP8, VP9, and AV1 video streams are accepted. Files are inspected and a thumbnail is generated before they appear in the project. H.264 MP4 is the most broadly compatible choice.
 3. Pause or step through the video. Select **Pin comment** and click a point, or select **Pencil** and draw. Colors, undo, and clearing are available.
 4. Write a comment and send it. The timestamp, frame estimate, normalized hotspot coordinates, and pencil paths are stored together. Draft markup stays tied to its original timestamp even if you seek elsewhere.
 5. Click a comment or a timeline marker to return to its timestamp. A hotspot opens its associated comment. Markup is visible at that moment and scales with the displayed video, including letterboxing.
@@ -43,7 +43,7 @@ Invitations work only where the app's host is reachable. A loopback address is f
 
 ## Persistence and configuration
 
-In local development, data is stored in ignored `.data/`: SQLite holds projects, comments, markup, status, the hashed workspace password, hashed sessions, and hashed invitation tokens. Local uploads and thumbnails live in `.data/uploads/`. When Drive is connected, local files are temporary; videos live in Drive and thumbnail data lives in the database. This directory must be retained to keep the workspace. Back up the complete directory while the service is stopped, or use a SQLite-aware backup procedure.
+In local development, data is stored in ignored `.data/`: SQLite holds projects, comments, markup, status, the hashed workspace password, hashed sessions, and hashed invitation tokens. Local uploads and thumbnails live in `.data/uploads/`. With Backblaze or an existing Drive connection, local video files are temporary; cloud storage holds the videos and the database holds thumbnail data. This directory must be retained to keep the workspace. Back up the complete directory while the service is stopped, or use a SQLite-aware backup procedure.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -52,7 +52,10 @@ In local development, data is stored in ignored `.data/`: SQLite holds projects,
 | `DATA_DIR` | `.data` inside the checkout | Absolute or relative path to the database and uploads. |
 | `SUPABASE_URL` | unset | Supabase project origin; enables external metadata storage. |
 | `SUPABASE_SECRET_KEY` | unset | Server-only Supabase secret or legacy service-role credential. |
-| `GOOGLE_CLIENT_ID` | unset | Google OAuth web client ID. |
+| `B2_KEY_ID` | unset | Server-only application key ID for one private Backblaze bucket. |
+| `B2_APPLICATION_KEY` | unset | Server-only Backblaze application key, never a master key. |
+| `B2_BUCKET_ID` | unset | Private bucket ID, not its name. |
+| `GOOGLE_CLIENT_ID` | unset | Optional legacy Google OAuth web client ID. |
 | `GOOGLE_CLIENT_SECRET` | unset | Server-only Google OAuth client secret. |
 | `GOOGLE_TOKEN_ENCRYPTION_KEY` | unset | Stable random value, at least 32 characters, for encrypted OAuth tokens/state. |
 | `GOOGLE_DRIVE_FOLDER_ID` | User-supplied folder ID | Folder for listing, imports, and site uploads. |
@@ -69,7 +72,7 @@ Run [supabase/schema.sql](supabase/schema.sql) in your project's SQL editor. It 
 
 Configure `SUPABASE_URL` and the server-only `SUPABASE_SECRET_KEY` in secure environment settings. Use a Supabase secret key or legacy service-role key, never a publishable/anon key. These variables must not have the `VITE_` prefix. Run `npm run check:supabase` to check the connection and schema without creating or changing records. Setting a URL without a credential fails startup; database failures return an error rather than falling back to a local database.
 
-With Supabase configured, projects, feedback, owner credentials, sessions, and invitations use the external database. Existing local SQLite records are not automatically migrated. Remote mode starts with an empty project list. Hosted uploads require a connected Google Drive account and store video files in the configured folder. Tokens are encrypted with `GOOGLE_TOKEN_ENCRYPTION_KEY`; thumbnails are stored with metadata. Configure Google credentials later using [DEPLOYMENT.md](DEPLOYMENT.md). Check the live service and Google account using the verification steps in DEPLOYMENT.md.
+With Supabase configured, projects, feedback, owner credentials, sessions, and invitations use the external database. Existing local SQLite records are not automatically migrated. Remote mode starts with an empty project list. Hosted uploads require configured Backblaze B2 storage or an existing Google Drive connection. Backblaze requires no OAuth connection table or Google credentials. Keys remain server-side; thumbnails are stored with metadata. Follow [DEPLOYMENT.md](DEPLOYMENT.md) to create the private bucket and add its settings to Render. Keep Backblaze account usage caps at $0 and do not add a payment method. The 10 GB free storage allowance is account-wide; the app checks all stored versions in its dedicated bucket and serializes uploads in this service. Other buckets or external uploads are outside that guard. Playback uses the provider’s separate free download/API allowances; reaching a cap can stop playback or uploads until usage resets or files are removed.
 
 `npm run test:supabase` uses Docker to start isolated PostgreSQL 17 and PostgREST 13 containers. It verifies the real schema and REST integration, anonymous access denial, annotations/status persistence with an erased local data directory, and cascade deletion. It creates no real Supabase records and cleans up its containers/network. Docker must be available; images are pulled if missing. Local browser/API tests explicitly isolate themselves from any configured Supabase project.
 
@@ -82,14 +85,14 @@ npm test
 npm run test:e2e
 ```
 
-API tests include Google OAuth state/PKCE, encrypted tokens, refresh, actual uploaded bytes against a local provider fixture, selected-folder validation, Drive byte-range playback, temporary-file cleanup, disconnect, and source-file preservation. They also cover authentication, validated uploads, thumbnails, byte-range playback, annotations, guest access boundaries, status updates, resolving, restart persistence, and revocation. Browser checks exercise the actual UI, playback, drawing, hotspots, guest comments, uploads, search, and mobile layout. Tests use temporary databases and remove them afterwards. Browser screenshots are written to ignored `test-results/`.
+API tests cover Backblaze private-bucket/key restrictions, real upload bytes and SHA-1 validation, a 10 GB guard, token refresh, scoped byte-range playback, rollback on database failure, temporary-file cleanup, and restart persistence against a local provider fixture. They also include Google OAuth state/PKCE, encrypted tokens, refresh, actual uploaded bytes against a local provider fixture, selected-folder validation, Drive byte-range playback, temporary-file cleanup, disconnect, and source-file preservation. They also cover authentication, validated uploads, thumbnails, byte-range playback, annotations, guest access boundaries, status updates, resolving, restart persistence, and revocation. Browser checks exercise the actual UI, playback, drawing, hotspots, guest comments, uploads, search, and mobile layout. Tests use temporary databases and remove them afterwards. Browser screenshots are written to ignored `test-results/`.
 
 The browser runner uses system Chromium at `/usr/bin/chromium` when available. Otherwise run `npx playwright install chromium`, or supply `PLAYWRIGHT_CHROMIUM_EXECUTABLE` with a local Chromium executable path.
 
 ## Prototype boundaries
 
 - The app is packaged for a Render Docker web service. Verify the public service and its deployed commit before relying on a local change being online.
-- Supabase metadata integration is implemented and tested locally against PostgreSQL/PostgREST; the real project connection is unverified. Google Drive import/upload and streaming are implemented and tested with a local Google fixture. The real Google account and real Supabase connection remain unverified. Render's free filesystem is ephemeral; hosted video data uses Drive and metadata uses Supabase.
+- The real Supabase core schema and deployed metadata connection were verified. Backblaze storage is tested with a local provider fixture; real bucket access must be verified after the owner supplies credentials. Legacy Google Drive remains available for existing connections. Render’s free filesystem is ephemeral; cloud video storage and Supabase hold persistent data.
 - Invitations require a reachable HTTPS application URL for external clients. Configure the owner and HTTPS before sharing real client material.
 - Video transcoding, version comparisons, email invitations, individual team accounts, real-time comment updates, and moving-object tracking are not included. Reload to see another reviewer's latest changes.
 - Comments store the exact selected timestamp. Frame numbers and stepping use the reported average frame rate; variable-frame-rate footage can have approximate frame numbers. For predictable frame indexing, export constant-frame-rate review copies.
@@ -101,4 +104,4 @@ The sample clip is generated locally and is clearly labeled. It is not customer 
 
 The application URL is https://pipelife-video-review.onrender.com. The former static-site address forwards to this web service.
 
-Use the supplied `Dockerfile` and free-service `render.yaml` template. Read [DEPLOYMENT.md](DEPLOYMENT.md) for the existing service URL, workspace setup, exact Google callback, deferred API configuration, and live checks. No paid resources have been provisioned. Local/tested behavior does not establish that the public Render service has received these changes.
+Use the supplied `Dockerfile` and free-service `render.yaml` template. Read [DEPLOYMENT.md](DEPLOYMENT.md) for the existing service URL, workspace setup, Backblaze setup, optional legacy Google configuration, and live checks. No paid resources have been provisioned. Local/tested behavior does not establish that the public Render service has received these changes.
