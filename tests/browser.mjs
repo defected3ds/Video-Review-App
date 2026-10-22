@@ -126,6 +126,16 @@ try {
   assert.ok(await page.locator('.video-overlay polyline').count());
   const groupedMarker=page.locator('.timeline-markers button').filter({has:page.locator('span').getByText('2',{exact:true})});
   assert.equal(await groupedMarker.count(),1);
+  const markerAlignment=await groupedMarker.evaluate(button=>{
+    const circle=getComputedStyle(button,'::after'),stem=getComputedStyle(button,'::before');
+    const borderBox=(style,dimension)=>parseFloat(style[dimension])+(style.boxSizing==='border-box'?0:parseFloat(style[dimension==='width'?'borderLeftWidth':'borderTopWidth'])+parseFloat(style[dimension==='width'?'borderRightWidth':'borderBottomWidth']));
+    const circleX=parseFloat(circle.left)+borderBox(circle,'width')/2,circleY=parseFloat(circle.top)+borderBox(circle,'height')/2;
+    const bounds=button.getBoundingClientRect(),text=button.querySelector('span').getBoundingClientRect();
+    const stemX=parseFloat(stem.left)+new DOMMatrix(stem.transform).m41+borderBox(stem,'width')/2;
+    return {numberX:text.x-bounds.x+text.width/2,numberY:text.y-bounds.y+text.height/2,circleX,circleY,stemX};
+  });
+  assert.ok(Math.abs(markerAlignment.numberX-markerAlignment.circleX)<.5&&Math.abs(markerAlignment.numberY-markerAlignment.circleY)<.5,'Marker count must share the bordered circle’s center');
+  assert.ok(Math.abs(markerAlignment.stemX-markerAlignment.circleX)<.5,'Timeline stem must align with the bordered circle’s center');
   await groupedMarker.click();
   await page.locator('.comment.selected .drawing-preview').waitFor();
   await groupedMarker.click();
@@ -247,8 +257,29 @@ try {
   await page.getByRole('menuitem',{name:'Delete project',exact:true}).click();
   await page.getByRole('button',{name:'Cancel',exact:true}).click();
   console.log('PASS: sidebar plus menu supports project creation/deletion, keyboard/outside dismissal and mobile access; Share link is the only sharing action');
+  for(const width of [320,390,430]){
+    await page.setViewportSize({width,height:844});
+    await page.waitForFunction(()=>{const bar=document.querySelector('.playback').getBoundingClientRect(),rail=document.querySelector('.timeline').getBoundingClientRect();return rail.width>bar.width*.85;});
+    const circles=await page.locator('.timeline-markers button').evaluateAll(buttons=>buttons.map(el=>{const b=el.getBoundingClientRect();return {left:b.left,right:b.right};}));
+    assert.ok(circles.every((circle,i)=>!i||circle.left>=circles[i-1].right+2),'Nearby mobile timeline markers must not overlap');
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Mobile timeline must not overflow the page');
+  }
+  await page.setViewportSize({width:390,height:844});
+  const mobileCluster=page.locator('.timeline-markers button').first(),clusterSize=Number(await mobileCluster.locator('span').innerText()),visited=new Set();
+  const mobileComments=await (await context.request.get(server.base+'/api/assets/demo/comments')).json();
+  for(let i=0;i<clusterSize;i++){
+    await mobileCluster.click();
+    const id=(await page.locator('.comment.selected').getAttribute('id')).replace('comment-','');visited.add(id);
+    const comment=mobileComments.find(c=>c.id===id);
+    await page.waitForFunction(time=>Math.abs(document.querySelector('video').currentTime-time)<.05,comment.time);
+  }
+  assert.equal(visited.size,clusterSize,'Grouped nearby marks must retain access to every feedback entry at its original timestamp');
+  assert.equal(await page.getByText('View in comments →',{exact:true}).count(),0);
+  await page.getByLabel('Video timeline').press('End');
+  await page.waitForFunction(()=>!document.querySelector('video').seeking&&document.querySelector('video').currentTime>7.8);
+  await page.getByRole('button',{name:'Please adjust this highlighted detail.',exact:true}).click();
   await page.screenshot({path:path.join(root,'test-results/mobile.png'),fullPage:true});
-  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'Mobile layout must not overflow horizontally');
+  console.log('PASS: full-width mobile timeline at 320/390/430px; nearby marks group without overlap and cycle to every original timestamp');
   await page.getByLabel('Comment',{exact:true}).fill('Mobile feedback');
   await page.getByRole('button',{name:'Send comment'}).click();
   await page.getByRole('button',{name:'Mobile feedback',exact:true}).waitFor();
