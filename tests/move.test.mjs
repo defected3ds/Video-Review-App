@@ -27,7 +27,7 @@ test('Moving a video preserves its media, feedback and guest links and only chan
     assert.deepEqual({...db.prepare('SELECT * FROM assets WHERE id=?').get(asset.id)},{...before,project_id:'guides'});db.close();
     assert.deepEqual(readdirSync(path.join(dir,'uploads')),files);assert.deepEqual(readFileSync(path.join(dir,'uploads',before.filename)),bytes);
     const shared=await (await request(guest,'GET',null,false)).json();assert.equal(shared.project.id,'guides');assert.equal(shared.asset.status,'Approved');
-    const comments=await (await request(guest+'/comments','GET',null,false)).json();assert.equal(comments.length,1);assert.deepEqual(comments[0],{...comment,resolved:true});
+    const comments=await (await request(guest+'/comments','GET',null,false)).json();assert.equal(comments.length,1);const {editToken,...originalComment}=comment;assert.deepEqual(comments[0],{...originalComment,resolved:true});
     assert.equal((await request(`/api/assets/${asset.id}/move`,'POST',{projectId:'guides'})).status,200);
     const projects=await (await request('/api/projects')).json();assert.equal(projects.find(p=>p.id==='launch').asset_count,1);assert.equal(projects.find(p=>p.id==='guides').asset_count,1);
     const destination=await (await request('/api/projects','POST',{name:'Final destination'})).json();

@@ -7,7 +7,9 @@ export function DrawingPaths({annotations}) {
   return annotations.map((s,i)=>s.points.length===1?<circle key={i} cx={s.points[0].x*1000} cy={s.points[0].y*1000} r="3" fill={s.color}/>:<polyline key={i} points={s.points.map(p=>`${p.x*1000},${p.y*1000}`).join(' ')} fill="none" stroke={s.color} strokeWidth="3" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round"/>);
 }
 export function drawingAnchor(drawing) {
+  if(drawing.anchor)return drawing.anchor;
   const points=drawing.annotations.flatMap(s=>s.points);
+  if(!points.length)return drawing.hotspot||{x:.5,y:.35};
   return {x:Math.max(...points.map(p=>p.x)),y:Math.min(...points.map(p=>p.y))};
 }
 export function drawingPosition(drawing) {

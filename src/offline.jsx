@@ -41,7 +41,7 @@ function Demo() {
     if (route.startsWith(`${base}/comments/`) && options.method === 'PATCH') {
       const id = route.split('/').at(-1), comment = state.comments.find(c => c.id === id);
       if (!comment) throw new Error('Comment not found.');
-      const result = { ...comment, resolved: Boolean(body.resolved) };
+      const result = typeof body.resolved==='boolean'?{...comment,resolved:body.resolved}:{...comment,body:body.body,annotations:body.annotations??comment.annotations,hotspot:body.hotspot===undefined?comment.hotspot:body.hotspot};
       write(asset.id, { ...state, comments: state.comments.map(c => c.id === id ? result : c) }); return structuredClone(result);
     }
     throw new Error('This action requires the deployed app.');

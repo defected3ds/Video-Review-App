@@ -63,6 +63,7 @@ try {
     const feedback={author:'Client',body:'Please fix this frame.',time:2,annotations:'[{"color":"#ff0000","points":[{"x":0.2,"y":0.3}]}]',hotspot:'{"x":0.4,"y":0.5}'};
     const invite=await (await request('/api/assets/test-video/share','POST')).json();assert.ok(invite.token);
     const response=await request(`/api/reviews/${invite.token}/comments`,'POST',{...feedback,annotations:JSON.parse(feedback.annotations),hotspot:JSON.parse(feedback.hotspot)},false);assert.equal(response.status,201);const comment=await response.json();assert.equal(comment.frame,50);
+    const edited=await request(`/api/reviews/${invite.token}/comments/${comment.id}`,'PATCH',{body:'Updated remote feedback',editToken:comment.editToken},false);assert.equal(edited.status,200);assert.equal((await edited.json()).frame,50);
     assert.equal((await request(`/api/reviews/${invite.token}/status`,'PATCH',{status:'Approved'},false)).status,200);
     assert.equal((await request(`/api/assets/test-video/comments/${comment.id}`,'PATCH',{resolved:true})).status,200);
     const projects=await (await request('/api/projects')).json();assert.equal(projects[0].asset_count,1);

@@ -10,7 +10,7 @@ import { GoogleDrive, drivePrefix, inlinePosterPrefix } from './drive.mjs';
 import { BackblazeStorage, b2Prefix } from './b2.mjs';
 import { R2Storage, r2Prefix } from './r2.mjs';
 import path from 'node:path';
-import { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
+import { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash, createHmac } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -30,10 +30,13 @@ const maxUploadMB=250;
 const sessionLifetime=60*60*1000;
 // Shorten pre-existing seven-day sessions once, without extending them on requests/restarts.
 await store.capSessions(Date.now()+sessionLifetime);
+let commentEditKey=process.env.SUPABASE_SECRET_KEY;
+if(!commentEditKey){await store.createConnectionOnce('comment-edit-key',randomBytes(32).toString('hex'));commentEditKey=(await store.connection('comment-edit-key')).payload;}
 const cookieValue=(req,name)=>req.get('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith(name+'='))?.slice(name.length+1);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const isReviewCopy=filename=>{const provider=sourceStorage(filename);if(!provider)return false;const ref=provider.reference(filename);return /-review\.(mp4|webm)$/.test(typeof ref==='string'?ref:ref.fileName);};
 const publicAsset = ({ filename, poster, ...asset }) => ({ ...asset, hasPoster: Boolean(poster), demo: !filename, inDrive: Boolean(filename?.startsWith(drivePrefix)), inB2: Boolean(filename?.startsWith(b2Prefix)),inR2:Boolean(filename?.startsWith(r2Prefix)),reviewCopy:isReviewCopy(filename) });
+const editTokenFor=id=>createHmac('sha256',commentEditKey).update('comment-edit:'+id).digest('hex');
 const serializeComment = row => ({ ...row, annotations: JSON.parse(row.annotations), hotspot: row.hotspot ? JSON.parse(row.hotspot) : null, resolved: Boolean(row.resolved) });
 const fail = (res, code, error) => res.status(code).json({ error });
 const app = express();
@@ -313,7 +316,7 @@ const addComment=async(req,res)=>{
   if(typeof body!=='string'||!body.trim()||body.length>4000||typeof author!=='string'||!author.trim()||author.length>80||!Number.isFinite(time)||time<0||time>=req.asset.duration)return fail(res,400,'Enter your name, a comment, and a timestamp within the video.');
   if(!Array.isArray(annotations)||annotations.length>100||!annotations.every(s=>s&&/^#[0-9a-f]{6}$/i.test(s.color)&&Array.isArray(s.points)&&s.points.length>0&&s.points.length<=1500&&s.points.every(validPoint))||JSON.stringify(annotations).length>100000||hotspot!==null&&!validPoint(hotspot))return fail(res,400,'Drawing or hotspot is invalid or too large. Undo some strokes and try again.');
   const id=randomUUID();await store.createComment({id,asset_id:req.asset.id,author:author.trim(),body:body.trim(),time,frame:Math.round(time*req.asset.fps),annotations:JSON.stringify(annotations),hotspot:hotspot?JSON.stringify(hotspot):null});
-  res.status(201).json(serializeComment(await store.comment(id)));
+  res.status(201).json({...serializeComment(await store.comment(id)),editToken:editTokenFor(id)});
 };
 assetRouter.patch('/:assetId',changeStatus);
 assetRouter.get('/:assetId/video',serveVideo);
@@ -321,7 +324,19 @@ assetRouter.get('/:assetId/playback-status',playbackStatus);
 assetRouter.get('/:assetId/poster',servePoster);
 assetRouter.get('/:assetId/comments',listComments);
 assetRouter.post('/:assetId/comments',addComment);
+const editComment=async(req,res)=>{
+  const comment=await store.comment(req.params.commentId);
+  if(!comment||comment.asset_id!==req.asset.id)return fail(res,404,'Comment not found.');
+  const token=req.body?.editToken;
+  if(!req.owner&&(typeof token!=='string'||!/^[a-f0-9]{64}$/.test(token)||!timingSafeEqual(Buffer.from(token,'hex'),Buffer.from(editTokenFor(comment.id),'hex'))))return fail(res,403,'You can edit feedback created in this browser.');
+  const body=req.body?.body,annotations=req.body?.annotations??JSON.parse(comment.annotations),hotspot=req.body?.hotspot===undefined?(comment.hotspot?JSON.parse(comment.hotspot):null):req.body.hotspot;
+  if(typeof body!=='string'||!body.trim()||body.length>4000)return fail(res,400,'Enter feedback of 1–4000 characters.');
+  if(!Array.isArray(annotations)||annotations.length>100||!annotations.every(s=>s&&/^#[0-9a-f]{6}$/i.test(s.color)&&Array.isArray(s.points)&&s.points.length>0&&s.points.length<=1500&&s.points.every(validPoint))||JSON.stringify(annotations).length>100000||hotspot!==null&&!validPoint(hotspot))return fail(res,400,'Drawing or hotspot is invalid or too large.');
+  if(!await store.editComment(req.asset.id,comment.id,{body:body.trim(),annotations:JSON.stringify(annotations),hotspot:hotspot?JSON.stringify(hotspot):null}))return fail(res,404,'Comment not found.');
+  res.json(serializeComment(await store.comment(comment.id)));
+};
 assetRouter.patch('/:assetId/comments/:commentId',async(req,res)=>{
+  if(req.body?.resolved===undefined)return editComment(req,res);
   if(typeof req.body?.resolved!=='boolean')return fail(res,400,'Resolved must be true or false.');
   const result=await store.resolve(req.asset.id,req.params.commentId,req.body.resolved);
   if(!result)return fail(res,404,'Comment not found.');res.json(serializeComment(await store.comment(req.params.commentId)));
@@ -339,7 +354,7 @@ guest.use(async(req,res,next)=>{
   req.reviewSession=token?await store.session(reviewSessionKey(req,token),Date.now()):null;
   next();
 });
-guest.get('/session',(req,res)=>res.json({authenticated:Boolean(req.owner||req.reviewSession),setupRequired:false,expiresAt:req.owner?req.sessionExpiresAt:req.reviewSession?.expires_at||null,serverTime:Date.now(),maxUploadMB}));
+guest.get('/session',(req,res)=>res.json({canManageFeedback:req.owner,authenticated:Boolean(req.owner||req.reviewSession),setupRequired:false,expiresAt:req.owner?req.sessionExpiresAt:req.reviewSession?.expires_at||null,serverTime:Date.now(),maxUploadMB}));
 guest.post('/login',async(req,res)=>withCredentialLock(async()=>{
   const now=Date.now(),key=req.ip,previous=attempts.get(key),attempt=previous&&previous.reset>now?previous:{count:0,reset:now+15*60000};attempts.set(key,attempt);
   if(++attempt.count>10)return fail(res,429,'Too many attempts. Try again in 15 minutes.');
@@ -348,7 +363,7 @@ guest.post('/login',async(req,res)=>withCredentialLock(async()=>{
   const token=randomBytes(32).toString('hex'),expiresAt=Date.now()+sessionLifetime;
   await store.clearSessions(Date.now());await store.createSession(reviewSessionKey(req,token),expiresAt);
   res.cookie('pipelife_review_session',token,{httpOnly:true,sameSite:'strict',secure:req.secure,path:reviewCookiePath(req),maxAge:sessionLifetime});
-  attempts.delete(key);res.json({authenticated:true,setupRequired:false,expiresAt,serverTime:Date.now(),maxUploadMB});
+  attempts.delete(key);res.json({canManageFeedback:req.owner,authenticated:true,setupRequired:false,expiresAt,serverTime:Date.now(),maxUploadMB});
 }));
 guest.post('/logout',async(req,res)=>{
   const token=cookieValue(req,'pipelife_review_session');if(token)await store.deleteSession(reviewSessionKey(req,token));
@@ -357,6 +372,7 @@ guest.post('/logout',async(req,res)=>{
 });
 guest.use((req,res,next)=>req.owner||req.reviewSession?next():fail(res,401,'Enter the shared password to open this review.'));
 guest.get('/',async(req,res)=>res.json({asset:publicAsset(req.asset),project:await store.project(req.asset.project_id)}));
+guest.patch('/comments/:commentId',(req,res)=>req.body?.resolved===undefined?editComment(req,res):fail(res,404,'Endpoint not found.'));
 guest.get('/playback-status',playbackStatus);guest.get('/video',serveVideo);guest.get('/poster',servePoster);guest.get('/comments',listComments);guest.post('/comments',addComment);guest.patch('/status',changeStatus);
 app.use('/api/reviews/:token',guest);
 app.use('/api',async(req,res)=>fail(res,404,'Endpoint not found.'));
