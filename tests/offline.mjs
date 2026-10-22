@@ -32,12 +32,12 @@ try {
  await page.getByLabel('Review status').selectOption('Approved');
  const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'Export feedback'}).click();
  const download=await downloadPromise;const feedback=JSON.parse(readFileSync(await download.path(),'utf8'));
- assert.equal(feedback.status,'Approved');assert.ok(feedback.comments.some(c=>c.hotspot&&c.annotations.length));
+ assert.equal(feedback.status,'Approved');assert.ok(feedback.comments.some(c=>c.hotspot&&c.body==='Offline hotspot and pencil feedback'));assert.ok(feedback.comments.some(c=>c.body==='Drawing'&&c.annotations.length));
  console.log('PASS: embedded video, playback, hotspot, pencil, status and feedback export with network offline');
  await context.setOffline(false);await page.reload();
  await page.getByRole('button',{name:'Offline hotspot and pencil feedback',exact:true}).waitFor();
  assert.equal(await page.getByLabel('Review status').inputValue(),'Approved');
- await page.getByRole('button',{name:'Resolve comment by Reviewer',exact:true}).click();
+ await page.locator('article.comment').filter({has:page.getByRole('button',{name:'Offline hotspot and pencil feedback',exact:true})}).getByRole('button',{name:'Resolve comment by Reviewer',exact:true}).click();
  await page.getByLabel('Filter comments').selectOption('Resolved');await page.getByRole('button',{name:'Offline hotspot and pencil feedback',exact:true}).waitFor();
  await context.setOffline(true);
  await page.getByLabel('Open local video').setInputFiles(path.join(root,'public/demo.mp4'));

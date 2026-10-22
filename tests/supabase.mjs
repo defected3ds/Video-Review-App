@@ -64,6 +64,7 @@ try {
     assert.equal((await request(`/api/assets/test-video/comments/${comment.id}`,'PATCH',{resolved:true})).status,200);
     const projects=await (await request('/api/projects')).json();assert.equal(projects[0].asset_count,1);
     const assets=await (await request(`/api/projects/${project.id}/assets`)).json();assert.equal(assets[0].comment_count,0);
+    const queue=await (await request('/api/reviews')).json();assert.equal(queue[0].project_name,'Persistent project');assert.equal(queue[0].status,'Approved');assert.equal(queue[0].comment_count,0);assert.equal(queue[0].filename,undefined);
     await server.stop();rmSync(dir,{recursive:true,force:true});server=await startServer(dir,env);
     assert.equal((await (await request('/api/assets/test-video')).json()).status,'Approved');
     const comments=await (await request('/api/assets/test-video/comments')).json();assert.deepEqual(comments[0].hotspot,{x:.4,y:.5});assert.equal(comments[0].resolved,true);

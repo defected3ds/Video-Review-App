@@ -41,6 +41,18 @@ test('Persistent video review workflow and guest access boundaries',async t=>{
       const response=await request(`/api/assets/${uploaded.id}/comments`,'POST',value);assert.equal(response.status,201);comment=await response.json();
       assert.equal(comment.frame,50);assert.deepEqual(comment.hotspot,value.hotspot);assert.deepEqual(comment.annotations,value.annotations);
     });
+    await t.test('review queue lists every project with status and feedback counts, and stays private',async()=>{
+      assert.equal((await request('/api/reviews','GET',null,false)).status,401);
+      const project=await (await request('/api/projects','POST',{name:'Queue project'})).json();
+      const form=new FormData();form.append('video',new Blob([readFileSync(path.join(root,'public/demo.mp4'))],{type:'video/mp4'}),'Queue review.mp4');
+      const queued=await (await request(`/api/projects/${project.id}/assets`,'POST',form)).json();
+      await request(`/api/assets/${queued.id}`,'PATCH',{status:'Changes requested'});
+      const rows=await (await request('/api/reviews')).json();
+      assert.ok(rows.some(a=>a.id===uploaded.id&&a.comment_count===1));
+      const item=rows.find(a=>a.id===queued.id);assert.equal(item.project_name,'Queue project');assert.equal(item.status,'Changes requested');assert.equal(item.filename,undefined);assert.equal(item.poster,undefined);
+      await request(`/api/projects/${project.id}`,'DELETE');
+      assert.ok(!(await (await request('/api/reviews')).json()).some(a=>a.id===queued.id));
+    });
     await t.test('guest links grant access only to the selected review',async()=>{
       const response=await request(`/api/assets/${uploaded.id}/share`,'POST');assert.equal(response.status,201);invitation=await response.json();
       const guestBase=`/api/reviews/${invitation.token}`;

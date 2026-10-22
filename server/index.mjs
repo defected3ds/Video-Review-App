@@ -162,6 +162,7 @@ app.post('/api/projects/:id/assets',async(req,res,next)=>{
   }catch(error){for(const file of [req.file.path,path.join(uploads,poster)])if(existsSync(file))unlinkSync(file);next(error);}
 });
 app.get('/api/storage/status',requireOwner,async(req,res)=>res.json(await videoStorage.status()));
+app.get('/api/reviews',requireOwner,async(req,res)=>res.json((await store.reviewAssets()).map(publicAsset)));
 // Drive authorization is owner-only. The callback uses a one-time, expiring state
 // plus PKCE; it does not rely on cookies being sent from Google's origin.
 app.get('/api/drive/status',requireOwner,async(req,res)=>res.json(await drive.status()));
