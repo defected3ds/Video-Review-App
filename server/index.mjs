@@ -1,7 +1,10 @@
 import express from 'express';
+import { reviewCopy, withVideoWork } from './review-copy.mjs';
+import { pipeline } from 'node:stream/promises';
+import { Readable, Transform } from 'node:stream';
 import multer from 'multer';
 import { localDatabase, supabaseDatabase } from './database.mjs';
-import { mkdirSync, existsSync, unlinkSync, readFileSync } from 'node:fs';
+import { mkdirSync, existsSync, unlinkSync, readFileSync, createWriteStream, statSync } from 'node:fs';
 import { proxyMedia } from './media.mjs';
 import { GoogleDrive, drivePrefix, inlinePosterPrefix } from './drive.mjs';
 import { BackblazeStorage, b2Prefix } from './b2.mjs';
@@ -21,7 +24,8 @@ const drive=new GoogleDrive(store,{allowLocal:process.env.DRIVE_ALLOW_LOCAL_TEST
 const videoStorage=new BackblazeStorage();
 const maxUploadMB=250;
 const hash = value => createHash('sha256').update(value).digest('hex');
-const publicAsset = ({ filename, poster, ...asset }) => ({ ...asset, hasPoster: Boolean(poster), demo: !filename, inDrive: Boolean(filename?.startsWith(drivePrefix)), inB2: Boolean(filename?.startsWith(b2Prefix)) });
+const isReviewCopy=filename=>Boolean(filename?.startsWith(b2Prefix)&&/-review\.(mp4|webm)$/.test(videoStorage.reference(filename).fileName));
+const publicAsset = ({ filename, poster, ...asset }) => ({ ...asset, hasPoster: Boolean(poster), demo: !filename, inDrive: Boolean(filename?.startsWith(drivePrefix)), inB2: Boolean(filename?.startsWith(b2Prefix)),reviewCopy:isReviewCopy(filename) });
 const serializeComment = row => ({ ...row, annotations: JSON.parse(row.annotations), hotspot: row.hotspot ? JSON.parse(row.hotspot) : null, resolved: Boolean(row.resolved) });
 const fail = (res, code, error) => res.status(code).json({ error });
 const app = express();
@@ -159,10 +163,14 @@ app.post('/api/projects/:id/assets',async(req,res,next)=>{
     let filename=req.file.filename,posterRef=poster;
     const connected=!videoStorage.configured&&(await drive.status()).connected;
     if(videoStorage.configured){
-      filename=await videoStorage.upload(req.file.path,`pvr/${req.params.id}/${id}${path.extname(req.file.originalname).toLowerCase()}`,path.extname(req.file.originalname).toLowerCase()==='.webm'?'video/webm':'video/mp4',req.file.size);
-      posterRef=`${inlinePosterPrefix}${readFileSync(path.join(uploads,poster)).toString('base64')}`;
-      try{await store.createAsset({id,project_id:req.params.id,name:path.basename(req.file.originalname).slice(0,200),filename,size:req.file.size,duration:Number(metadata.format.duration),fps:Number.isFinite(n/d)&&n/d>0?n/d:25,poster:posterRef});}
-      catch(error){await videoStorage.remove(filename).catch(()=>{});throw error;}
+      const reviewPath=req.file.path+'.review.mp4',fps=Number.isFinite(n/d)&&n/d>0?n/d:25;
+      try{
+        const copy=await withVideoWork(()=>reviewCopy(req.file.path,reviewPath,{duration:Number(metadata.format.duration),fps,extension:path.extname(req.file.originalname).toLowerCase()}));
+        filename=await videoStorage.upload(copy.path,`pvr/${req.params.id}/${id}-review${copy.extension}`,copy.extension==='.webm'?'video/webm':'video/mp4',copy.size);
+        posterRef=`${inlinePosterPrefix}${readFileSync(path.join(uploads,poster)).toString('base64')}`;
+        try{await store.createAsset({id,project_id:req.params.id,name:path.basename(req.file.originalname,path.extname(req.file.originalname)).slice(0,190)+copy.extension,filename,size:copy.size,duration:Number(metadata.format.duration),fps,poster:posterRef});}
+        catch(error){await videoStorage.remove(filename).catch(()=>{});throw error;}
+      }finally{if(existsSync(reviewPath))unlinkSync(reviewPath);}
       for(const file of [req.file.path,path.join(uploads,poster)])if(existsSync(file))unlinkSync(file);
     }else if(connected){
       const uploaded=await drive.upload(req.file.path,path.basename(req.file.originalname).slice(0,200),path.extname(req.file.originalname).toLowerCase()==='.webm'?'video/webm':'video/mp4',req.file.size);
@@ -212,6 +220,31 @@ assetRouter.use('/:assetId',async(req,res,next)=>{
   if(!req.asset)return fail(res,404,'Video not found.');next();
 });
 assetRouter.get('/:assetId',async(req,res)=>res.json(publicAsset(req.asset)));
+assetRouter.post('/:assetId/optimize',async(req,res)=>withVideoWork(async()=>{
+  const asset=await store.asset(req.asset.id);
+  if(!asset)return fail(res,404,'Video not found.');
+  if(!asset.filename?.startsWith(b2Prefix))return fail(res,400,'Only Backblaze videos can be optimized here.');
+  if(isReviewCopy(asset.filename))return res.json({asset:publicAsset(asset),bytesSaved:0,alreadyOptimized:true});
+  const source=path.join(uploads,randomUUID()+'.source'),output=source+'.review.mp4';let uploaded;
+  try{
+    // One source download is needed. A capped account fails here before any changes.
+    const controller=AbortSignal.timeout(180000),response=await videoStorage.media(asset.filename,{signal:controller});
+    if(response.status!==200||!response.body){await response.body?.cancel();return fail(res,503,'Unable to read the original video for compression.');}
+    let received=0;
+    const limit=new Transform({transform(chunk,encoding,done){received+=chunk.length;if(received>maxUploadMB*1024*1024)done(Object.assign(new Error('Video exceeds the processing size limit.'),{status:413,publicMessage:'Video exceeds the processing size limit.'}));else done(null,chunk);}});
+    await pipeline(Readable.fromWeb(response.body),limit,createWriteStream(source),{signal:controller});
+    if(asset.size&&statSync(source).size!==asset.size)return fail(res,503,'The source download was incomplete. Your existing video is unchanged.');
+    const copy=await reviewCopy(source,output,{duration:asset.duration,fps:asset.fps,extension:path.extname(asset.name).toLowerCase()});
+    uploaded=await videoStorage.upload(copy.path,`pvr/${asset.project_id}/${asset.id}-review${copy.extension}`,copy.extension==='.webm'?'video/webm':'video/mp4',copy.size);
+    const replacement={filename:uploaded,size:copy.size,name:path.basename(asset.name,path.extname(asset.name)).slice(0,190)+copy.extension};
+    if(!await store.replaceVideo(asset.id,asset.filename,replacement))throw Object.assign(new Error('The video changed during processing. Refresh and try again.'),{status:409});
+    const saved=Math.max(0,asset.size-copy.size);uploaded=null;
+    res.json({asset:publicAsset({...asset,...replacement}),bytesSaved:saved});
+  }finally{
+    if(uploaded)await videoStorage.remove(uploaded).catch(()=>{});
+    for(const file of [source,output])if(existsSync(file))unlinkSync(file);
+  }
+}));
 assetRouter.post('/:assetId/share',async(req,res)=>{
   const token=randomBytes(24).toString('hex'),expiresAt=Date.now()+7*86400000;
   await store.createReview(hash(token),req.asset.id,expiresAt);

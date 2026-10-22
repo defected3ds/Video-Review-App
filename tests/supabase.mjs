@@ -75,6 +75,14 @@ try {
     assert.equal((await request(`/api/reviews/${invite.token}`,'GET',null,false)).status,404);
     assert.deepEqual(await database.comments('test-video'),[]);
     assert.deepEqual(await database.projects(),[]);
+    await database.createProject('replacement-test','Review copy test');
+    const oldReference='b2:old:'+Buffer.from('pvr/test/old.mp4').toString('base64url'),newReference='b2:new:'+Buffer.from('pvr/test/new-review.mp4').toString('base64url');
+    await database.createAsset({id:'replacement-video',project_id:'replacement-test',name:'Source.mp4',filename:oldReference,size:119000000,duration:8,fps:25,poster:'demo'});
+    assert.equal(await database.replaceVideo('replacement-video','stale-reference',{filename:newReference,size:9000000,name:'Source.mp4'}),0);
+    assert.equal(await database.replaceVideo('replacement-video',oldReference,{filename:newReference,size:9000000,name:'Source.mp4'}),1);
+    assert.equal((await database.asset('replacement-video')).size,9000000);assert.equal((await database.asset('replacement-video')).fps,25);
+    await database.deleteProject('replacement-test');
+
     await server.stop();server=await startServer(dir,env);assert.deepEqual(await (await request('/api/projects')).json(),[]);
     assert.equal((await request('/api/logout','POST')).status,204);
     assert.equal((await request('/api/projects')).status,401);

@@ -22,6 +22,9 @@ try {
   await page.getByRole('button',{name:'Play video',exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Connect Drive',exact:true}).count(),0);
   assert.equal(await page.getByRole('link',{name:'Settings',exact:true}).count(),0);
+  const adminReview=await (await context.request.get(server.base+'/api/assets/demo')).json();
+  await page.route('**/api/reviews',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{...adminReview,project_name:'Autumn campaign',inB2:true,reviewCopy:false,size:119000000}])}));
+  await page.route('**/api/assets/demo/optimize',async route=>{await new Promise(resolve=>setTimeout(resolve,150));await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({asset:{...adminReview,inB2:true,reviewCopy:true,size:9000000},bytesSaved:110000000})});});
   await page.goto(server.base+'/admin');
   await page.getByRole('heading',{name:'Settings',exact:true}).waitFor();
   assert.equal(new URL(page.url()).pathname,'/admin');
@@ -29,6 +32,11 @@ try {
   await page.getByText('Connect your free video storage',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Check connection',exact:true}).click();
   await page.getByText('Connect your free video storage',{exact:true}).waitFor();
+  await page.getByRole('heading',{name:'Smaller review videos',exact:true}).waitFor();
+  await page.getByRole('button',{name:/^Compress Welcome/}).click();
+  await page.getByText('Review video reduced by 110.0 MB. Comments and links are preserved.',{exact:true}).waitFor();
+  await page.getByText('Review copy ready',{exact:true}).waitFor();
+  await page.unroute('**/api/reviews');await page.unroute('**/api/assets/demo/optimize');
   await page.getByRole('link',{name:'Back to projects',exact:true}).click();
   await page.getByRole('button',{name:'Play video',exact:true}).waitFor();
   console.log('PASS: original logo and authenticated /admin storage settings replace the Google Drive connection prompt');

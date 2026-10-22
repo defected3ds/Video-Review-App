@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -26,11 +27,11 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
       }
       if (url.pathname.includes('/b2_upload_file/')) {
         assert.equal(url.hostname, 'pod-031-2032-06.backblaze.com');
-        assert.equal(req.headers.authorization, 'test-upload-token'); assert.deepEqual(bytes, video);
+        assert.equal(req.headers.authorization, 'test-upload-token'); assert.ok(bytes.length>0);assert.ok(bytes.length<=video.length);
         assert.equal(req.headers['x-bz-content-sha1'], createHash('sha1').update(bytes).digest('hex'));
         const fileName = decodeURIComponent(req.headers['x-bz-file-name']); assert.match(fileName, /^pvr\/[^/]+\/[^/]+\.mp4$/);
         const file = { fileId: `uploaded-${++serial}`, fileName, bucketId, contentLength: bytes.length, contentSha1: req.headers['x-bz-content-sha1'] };
-        files.set(file.fileId, file);
+        Object.defineProperty(file,'bytes',{value:bytes});files.set(file.fileId, file);
         if (deleteDuringUpload) { await request(`/api/projects/${deleteDuringUpload}`, 'DELETE'); deleteDuringUpload = undefined; }
         return json(file);
       }
@@ -45,11 +46,12 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
         if(downloadCap)return json({code:'cap_exceeded',message:'Download bandwidth cap exceeded'},403);
         if (expiredMedia) { expiredMedia = false; return json({ code: 'expired_auth_token' }, 401); }
         assert.ok(files.has(url.searchParams.get('fileId')));
+        const stored=files.get(url.searchParams.get('fileId')).bytes;
         if (req.headers.range) {
           const [, a, b] = req.headers.range.match(/^bytes=(\d+)-(\d+)$/), start = Number(a), end = Number(b);
-          res.writeHead(206, { 'content-type': 'video/mp4', 'content-range': `bytes ${start}-${end}/${video.length}`, 'content-length': String(end - start + 1) }); return res.end(video.subarray(start, end + 1));
+          res.writeHead(206, { 'content-type': 'video/mp4', 'content-range': `bytes ${start}-${end}/${stored.length}`, 'content-length': String(end - start + 1) }); return res.end(stored.subarray(start, end + 1));
         }
-        res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': String(video.length) }); return res.end(video);
+        res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': String(stored.length) }); return res.end(stored);
       }
       throw new Error(`Unexpected Backblaze method ${url.pathname}`);
     } catch (error) { console.error(error); res.writeHead(500); res.end(); }
@@ -58,7 +60,7 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
   const env = { B2_KEY_ID: 'test-key-id', B2_APPLICATION_KEY: 'test-key-secret', B2_BUCKET_ID: bucketId, MOCK_B2_URL: `http://127.0.0.1:${provider.address().port}`, NODE_OPTIONS: `--import=${path.join(root, 'tests/b2-fetch-preload.mjs')}` };
   const request = (route, method = 'GET', body, auth = true, headers = {}) => fetch(server.base + route, { method, headers: { ...(auth && cookie ? { cookie } : {}), ...(body && !(body instanceof FormData) ? { 'content-type': 'application/json' } : {}), ...headers }, body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined });
   const upload = project => { const form = new FormData(); form.append('video', new Blob([video], { type: 'video/mp4' }), 'Review.mp4'); return request(`/api/projects/${project}/assets`, 'POST', form); };
-  let asset, invitation;
+  let asset, invitation, storedVideo;
   try {
     server = await startServer(dir, env);
     await t.test('owner-only status and private bucket validation', async () => {
@@ -72,13 +74,13 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
       assert.ok(!JSON.stringify(status).includes('test-key')); assert.ok(!JSON.stringify(status).includes('token'));
     });
     await t.test('validated video bytes and checksum reach storage; temporary files are removed', async () => {
-      const response = await upload('launch'); assert.equal(response.status, 201); asset = await response.json();
+      const response = await upload('launch'); assert.equal(response.status, 201); asset = await response.json();storedVideo=[...files.values()].at(-1).bytes;assert.equal(asset.reviewCopy,true);assert.equal(asset.size,storedVideo.length);
       assert.equal(asset.inB2, true); assert.equal(asset.inDrive, false); assert.equal(asset.filename, undefined); assert.equal(asset.duration, 8); assert.equal(asset.fps, 25);
       assert.deepEqual(readdirSync(path.join(dir, 'uploads')), []);
       const poster = await request(`/api/assets/${asset.id}/poster`); assert.equal(poster.status, 200); assert.match(poster.headers.get('content-type'), /image\/jpeg/);
     });
     await t.test('10 GB guard counts retained versions before uploading and cleans rejected temporary files', async () => {
-      const count = serial; extraBytes = freeStorageBytes - video.length;
+      const count = serial; extraBytes = freeStorageBytes - [...files.values()].reduce((sum,file)=>sum+file.contentLength,0);
       assert.equal((await upload('launch')).status, 413); assert.equal(serial, count); extraBytes = 0;
       assert.deepEqual(readdirSync(path.join(dir, 'uploads')), []);
     });
@@ -87,7 +89,7 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
       invitation = await (await request(`/api/assets/${asset.id}/share`, 'POST')).json(); expiredMedia = true;
       const before = authorizations;
       const response = await request(`/api/reviews/${invitation.token}/video`, 'GET', null, false, { Range: 'bytes=10-99' });
-      assert.equal(response.status, 206); assert.equal(response.headers.get('content-range'), `bytes 10-99/${video.length}`); assert.deepEqual(Buffer.from(await response.arrayBuffer()), video.subarray(10, 100)); assert.equal(authorizations, before + 1); assert.equal(response.headers.get('authorization'), null);
+      assert.equal(response.status, 206); assert.equal(response.headers.get('content-range'), `bytes 10-99/${storedVideo.length}`); assert.deepEqual(Buffer.from(await response.arrayBuffer()), storedVideo.subarray(10, 100)); assert.equal(authorizations, before + 1); assert.equal(response.headers.get('authorization'), null);
       assert.equal((await request(`/api/reviews/${invitation.token}/comments`, 'POST', { author: 'Client', body: 'Check this frame', time: 2, hotspot: { x: .3, y: .5 }, annotations: [{ color: '#00358e', points: [{ x: .1, y: .2 }, { x: .2, y: .3 }] }] }, false)).status, 201);
       assert.equal((await request(`/api/assets/${asset.id}/video`, 'GET', null, true, { Range: 'garbage' })).status, 416);
       assert.equal((await request(`/api/projects/launch/assets`, 'POST', null, false)).status, 401);
@@ -104,9 +106,23 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
       assert.equal((await (await request(`/api/assets/${asset.id}/playback-status`)).json()).available,true);
       assert.equal((await (await request('/api/storage/status')).json()).playbackWarning,null);
     });
+    await t.test('existing source compression preserves scoped links, timing, feedback and originals', async () => {
+      assert.equal((await request(`/api/assets/${asset.id}/optimize`,'POST',null,false)).status,401);
+      assert.equal((await request(`/api/reviews/${invitation.token}/optimize`,'POST',null,false)).status,404);
+      const db=new DatabaseSync(path.join(dir,'review.sqlite')),legacy=[...files.values()][0];legacy.fileName=legacy.fileName.replace('-review.mp4','.mp4');
+      db.prepare('UPDATE assets SET filename=? WHERE id=?').run(`b2:${legacy.fileId}:${Buffer.from(legacy.fileName).toString('base64url')}`,asset.id);db.close();
+      const count=files.size;downloadCap=true;
+      const capped=await request(`/api/assets/${asset.id}/optimize`,'POST');assert.equal(capped.status,503);assert.equal(files.size,count);assert.deepEqual(readdirSync(path.join(dir,'uploads')),[]);
+      downloadCap=false;
+      const result=await request(`/api/assets/${asset.id}/optimize`,'POST');assert.equal(result.status,200);const value=await result.json();assert.equal(value.asset.id,asset.id);assert.equal(value.asset.reviewCopy,true);assert.equal(value.asset.fps,25);assert.equal(value.asset.duration,8);assert.equal(files.size,count+1);assert.ok(files.has(legacy.fileId));
+      storedVideo=[...files.values()].at(-1).bytes;
+      const shared=await (await request(`/api/reviews/${invitation.token}`,'GET',null,false)).json();assert.equal(shared.asset.id,asset.id);assert.equal(shared.asset.size,storedVideo.length);
+      const comments=await (await request(`/api/reviews/${invitation.token}/comments`,'GET',null,false)).json();assert.ok(comments.some(comment=>comment.body==='Check this frame'&&comment.time===2&&comment.annotations.length));
+      const again=await (await request(`/api/assets/${asset.id}/optimize`,'POST')).json();assert.equal(again.alreadyOptimized,true);assert.equal(files.size,count+1);assert.deepEqual(readdirSync(path.join(dir,'uploads')),[]);
+    });
     await t.test('restart preserves playback/feedback and deletion preserves cloud originals as disclosed', async () => {
       await server.stop(); server = await startServer(dir, env);
-      const playback = await request(`/api/reviews/${invitation.token}/video`, 'GET', null, false); assert.equal(playback.status, 200); assert.deepEqual(Buffer.from(await playback.arrayBuffer()), video);
+      const playback = await request(`/api/reviews/${invitation.token}/video`, 'GET', null, false); assert.equal(playback.status, 200); assert.deepEqual(Buffer.from(await playback.arrayBuffer()), storedVideo);
       const comments = await (await request(`/api/reviews/${invitation.token}/comments`, 'GET', null, false)).json(); assert.ok(comments.some(comment => comment.body === 'Check this frame' && comment.hotspot.x === .3));
       assert.equal((await request(`/api/assets/${asset.id}/share`, 'DELETE')).status, 204);
       assert.equal((await request(`/api/reviews/${invitation.token}/video`, 'GET', null, false)).status, 404);
