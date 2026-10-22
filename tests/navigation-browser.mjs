@@ -41,15 +41,23 @@ try{
   let projects=await (await context.request.get(server.base+'/api/projects')).json();assert.equal(projects.find(p=>p.id==='launch').asset_count,0);assert.equal(projects.find(p=>p.id==='guides').asset_count,1);
   const guest=await browser.newContext(),client=await guest.newPage();await client.goto(server.base+'/?review='+link.token);await client.getByLabel('Workspace password',{exact:true}).fill('review');await client.getByRole('button',{name:'Sign in',exact:true}).click();await client.getByRole('heading',{name:'Installation guides',exact:true}).waitFor();await client.getByRole('button',{name:'Drawing on frame zero',exact:true}).click();await client.locator('.saved-drawing p').filter({hasText:'Drawing on frame zero'}).waitFor();assert.equal(await client.getByLabel('Review status').inputValue(),'Approved');assert.equal(await client.getByRole('group',{name:'Video actions'}).count(),0);await guest.close();
   await target.click();await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);await page.getByRole('button',{name:'Drawing on frame zero',exact:true}).click();
-  const actions=page.getByRole('group',{name:'Video actions'});for(const title of ['Upload video','Move video','Delete video']){const action=await actions.getByRole('button',{name:title,exact:true}).boundingBox(),stage=await page.locator('.video-stage').boundingBox();assert.ok(action.y+action.height<=stage.y);}
+  const actions=page.getByRole('group',{name:'Video actions'});for(const title of ['Upload video','Delete video']){const action=await actions.getByRole('button',{name:title,exact:true}).boundingBox(),stage=await page.locator('.video-stage').boundingBox();assert.ok(action.y+action.height<=stage.y);}
   assert.equal(await page.locator('.topbar').getByRole('button',{name:'Upload video',exact:true}).count(),0);assert.equal(await page.locator('.asset-delete').count(),0);
   mkdirSync(path.join(root,'test-results'),{recursive:true});await page.screenshot({path:path.join(root,'test-results/video-actions.png'),fullPage:true});
-  // The accessible Move dialog also works on mobile and preserves the source on cancellation/failure.
-  await page.setViewportSize({width:390,height:844});await actions.getByRole('button',{name:'Move video',exact:true}).click();await page.getByLabel('Destination project').selectOption('launch');await page.getByRole('dialog').getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(await page.locator('.asset-card').count(),1);
-  await actions.getByRole('button',{name:'Move video',exact:true}).click();
-  await page.route('**/api/assets/demo/move',route=>route.fulfill({status:503,json:{error:'Temporary move failure'}}));await page.getByRole('dialog').getByRole('button',{name:'Move video',exact:true}).click();await page.getByRole('alert').filter({hasText:'Temporary move failure'}).waitFor();assert.equal(await page.getByRole('dialog').count(),1);assert.equal(await page.locator('.asset-card').count(),1);await page.unroute('**/api/assets/demo/move');
-  await page.getByRole('dialog').getByRole('button',{name:'Move video',exact:true}).click();await page.getByRole('heading',{name:'Your next review starts here'}).waitFor();
-  await page.getByLabel('Choose project',{exact:true}).selectOption('launch');await page.getByRole('button',{name:'Drawing on frame zero',exact:true}).waitFor();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  assert.equal(await page.getByRole('button',{name:'Move video',exact:true}).count(),0);
+  // Failed drags leave the source intact; retrying moves it back with its feedback.
+  await page.route('**/api/assets/demo/move',route=>route.fulfill({status:503,json:{error:'Temporary move failure'}}));
+  await page.locator('.asset-card').dragTo(page.locator('[data-project-id="launch"]'));
+  await page.getByRole('alert').filter({hasText:'Temporary move failure'}).waitFor();
+  assert.equal(await page.locator('.asset-card').count(),1);
+  await page.unroute('**/api/assets/demo/move');
+  await page.locator('.asset-card').dragTo(page.locator('[data-project-id="launch"]'));
+  await page.getByRole('heading',{name:'Your next review starts here'}).waitFor();
+  await page.setViewportSize({width:390,height:844});
+  await page.getByLabel('Choose project',{exact:true}).selectOption('launch');
+  await page.getByRole('button',{name:'Drawing on frame zero',exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Move video',exact:true}).count(),0);
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.setViewportSize({width:1366,height:768});await page.reload();await page.getByRole('button',{name:'Drawing on frame zero',exact:true}).waitFor();assert.equal(await page.getByLabel('Review status').inputValue(),'Approved');
   // Moving an unselected video preserves the selected video's unfinished feedback.
   const second=await context.request.post(server.base+'/api/projects/launch/assets',{multipart:{video:{name:'Second.mp4',mimeType:'video/mp4',buffer:readFileSync(path.join(root,'public/demo.mp4'))}}});assert.equal(second.status(),201);
@@ -60,5 +68,5 @@ try{
   // Moving a selected video with an unfinished draft can be canceled without losing the draft.
   page.once('dialog',dialog=>dialog.dismiss());
   await page.locator('.asset-card').dragTo(page.locator('[data-project-id="guides"]'));assert.equal(await page.getByLabel('Comment',{exact:true}).inputValue(),'Keep my unfinished comment');assert.equal(await page.locator('.asset-card').count(),1);
-  assert.deepEqual(errors,[]);console.log('PASS: real drag across projects, guest link/feedback/approval retention, controls above video, mobile Move dialog, cancel/failure/dirty-draft protection and reload');
+  assert.deepEqual(errors,[]);console.log('PASS: real drag across projects, guest link/feedback/approval retention, upload/delete above video without Move button, mobile layout, failed-drag/dirty-draft protection and reload');
 }finally{await browser.close();await server.stop();rmSync(dir,{recursive:true,force:true});}
