@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, CheckCircle2, ExternalLink, Folder, KeyRound, LoaderCircle, LogOut, Save, Settings, Users, UserRound } from 'lucide-react';
 import Brand from './Brand.jsx';
+import ThemeToggle from './ThemeToggle.jsx';
 import {commenterName,rememberCommenter} from './commenter.js';
 import { api, json } from './review-utils.js';
 
@@ -40,7 +41,7 @@ export default function Admin({ session, onSession }) {
   const r2Active=storage?.provider==='r2',providerName=r2Active?'Cloudflare R2':'Backblaze B2';
   const spinner = <LoaderCircle className="spin" size={17}/>;
   return <div className="admin-page">
-    <header className="topbar admin-topbar"><Brand/><div className="topbar-actions"><a className="secondary" href="/"><ArrowLeft size={16}/>Back to projects</a><button className="icon-button" aria-label="Sign out" onClick={async () => { try { await api('/api/logout', { method: 'POST' }); location.assign('/admin'); } catch (e) { setError(e.message); } }}><LogOut size={19}/></button></div></header>
+    <header className="topbar admin-topbar"><Brand/><div className="topbar-actions"><ThemeToggle/><a className="secondary" href="/"><ArrowLeft size={16}/>Back to projects</a><button className="icon-button" aria-label="Sign out" onClick={async () => { try { await api('/api/logout', { method: 'POST' }); location.assign('/admin'); } catch (e) { setError(e.message); } }}><LogOut size={19}/></button></div></header>
     <main className="admin-main"><div className="admin-heading"><span className="eyebrow">Workspace administration</span><h1>Settings</h1><p>Manage your profile, people, workspace password, and video storage.</p></div>
       {error && <div className="admin-alert error" role="alert">{error}</div>}{notice && <div className="admin-alert admin-success" role="status"><CheckCircle2 size={18}/>{notice}</div>}
       <div className="admin-layout"><nav className="admin-nav" aria-label="Settings sections"><a href="#profile"><UserRound size={17}/>Your profile</a><a href="#people"><Users size={17}/>People</a><a href="#password"><KeyRound size={17}/>Password</a><a href="#storage"><Folder size={17}/>Video storage</a><div className="admin-access"><Settings size={18}/><p>Protected by your workspace sign-in. Client invitation links do not grant access.</p></div></nav>

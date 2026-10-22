@@ -1,0 +1,73 @@
+.auth-page>header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.theme-toggle{flex-shrink:0}
+.theme-toggle[aria-pressed=true]{background:#203d57;color:#78d4fa}
+@media(max-width:360px){.auth-page .brand-subtitle{display:none}.topbar-actions{gap:12px}}
+
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --canvas:#101a2a;
+  --surface:#172338;
+  --raised:#1e2e45;
+  --selected:#203d57;
+  --text:#e0eafa;
+  --muted:#a4b4cb;
+  --line:#34465e;
+  --light:#203d57;
+  --cyan:#41b6e6;
+  color:var(--text);
+  background:var(--canvas);
+  scrollbar-color:#536780 var(--canvas);
+}
+:root[data-theme=dark] :is(.app,.admin-page,.auth-page){background:var(--canvas);color:var(--text)}
+:root[data-theme=dark] :is(.topbar,.auth-page>header,.sidebar,.player,.comments-panel,.composer,.asset-card,.review-queue,.auth-card,.admin-card,.modal,.pin-editor,.emoji-popover,.commenter-popover,.project-menu-items){background:var(--surface);color:var(--text);border-color:var(--line)}
+:root[data-theme=dark] :is(.player,.comments-panel,.review-queue,.admin-card,.auth-card,.auth-page>header){border-top-color:#328dc9}
+:root[data-theme=dark] :is(input,textarea,select){background:#111d2f;color:var(--text);border-color:var(--line)}
+:root[data-theme=dark] :is(input,textarea)::placeholder{color:#91a4c0;opacity:1}
+:root[data-theme=dark] .status-select{background:var(--surface);border-color:var(--line)}
+:root[data-theme=dark] .status-select select{background:transparent}
+:root[data-theme=dark] .comments-heading select{background:var(--raised)}
+:root[data-theme=dark] .search input{background:transparent}
+:root[data-theme=dark] .primary{background:#0968b3;border-color:#328dc9;color:#fff}
+:root[data-theme=dark] .primary:hover:not(:disabled){background:#0d7aca}
+:root[data-theme=dark] .secondary{background:var(--raised);color:var(--text);border-color:var(--line)}
+:root[data-theme=dark] .secondary:hover:not(:disabled){background:var(--selected);border-color:var(--cyan)}
+:root[data-theme=dark] :is(.icon-button:hover,.project-menu-items button:hover,.project-menu-items button:focus-visible,.project-button:hover,.admin-nav>a:hover,.queue-row:hover,.emoji-grid button:hover){background:var(--raised)}
+:root[data-theme=dark] :is(.topbar nav button.active,.sidebar-assets button.selected,.commenter-menu>.avatar,.storage-summary,.queue-empty h2,.comment-empty h3){color:var(--text)}
+:root[data-theme=dark] :is(.project-button.selected,.project-button.drop-active,.sidebar-assets button.selected,.comment.selected,.drawing-draft,.queue-filters button.active){background:var(--selected)}
+:root[data-theme=dark] :is(.brand-subtitle,.workspace-heading p,.breadcrumb,.project-button small,.sidebar-assets button,.sidebar-footer,.frame-tag,.composer-time,.composer-bottom>span,.asset-details small,.empty p,.empty small,.auth-intro>p,.auth-card p,.auth-card small,.auth-footnote,.share-intro p,.modal>p,.drive-file small,.player-hint,.comments-heading h2 span,.asset-section-heading h2 span,.comment-empty,.draft-label,.offline-settings){color:var(--muted)}
+:root[data-theme=dark] :is(.timestamp,.annotation-tag,.composer-time button,.pin-sidebar-link,.edit-comment-button,.remembered-profile button,.composer h3 span){color:#70d0f7}
+:root[data-theme=dark] .timestamp{background:var(--surface);border-color:#416687}
+:root[data-theme=dark] .comment-body{color:var(--text)}
+:root[data-theme=dark] .comment.resolved .comment-body{color:#a7b7cc}
+:root[data-theme=dark] :is(.comment,.queue-row,.queue-toolbar,.comments-heading,.composer,.people-list li,.optimization-list li){border-color:var(--line)}
+:root[data-theme=dark] .avatar{background:#23455e;color:#8ddcff;border-color:#416687}
+:root[data-theme=dark] .color-1{background:#304159;color:#d0def1}
+:root[data-theme=dark] .color-2{background:#3d345d;color:#d8c5ff}
+:root[data-theme=dark] :is(.resolved-label,.optimized-label){color:#71dfb6}
+:root[data-theme=dark] :is(.resolve-button.done,.resolve-button:hover){background:#1c443e;color:#71dfb6}
+:root[data-theme=dark] .asset-details strong{color:var(--text)}
+:root[data-theme=dark] :is(.thumbnail,.queue-thumbnail){background:var(--raised)}
+:root[data-theme=dark] .asset-card.selected{border-color:var(--cyan)}
+:root[data-theme=dark] .status-badge{background:#204861;color:#8ddcff}
+:root[data-theme=dark] .status-badge.approved{background:#1b4439;color:#7be0b6}
+:root[data-theme=dark] .status-badge.changes-requested{background:#522f2c;color:#ffb7a4}
+:root[data-theme=dark] :is(.empty,.drawing-preview){background:var(--surface)}
+:root[data-theme=dark] .drawing-preview svg{background:#263650}
+:root[data-theme=dark] :is(.small-icon,.empty-icon,.guest-label,.upload-progress,.offline-badge,.offline-notice){background:#203d57;color:#8ddcff}
+:root[data-theme=dark] :is(.annotation-toolbar>button:hover:not(:disabled),.annotation-toolbar>button.selected){background:var(--selected)}
+:root[data-theme=dark] .annotation-toolbar>.save-drawing{background:#0968b3;color:#fff}
+:root[data-theme=dark] .feedback-edit-draft{background:#3d3423;border-left-color:#e3b24f}
+:root[data-theme=dark] :is(.error-banner,.auth-card .error,.admin-alert:not(.admin-success)){background:#442b31;color:#ffb9b1;border-color:#77505a}
+:root[data-theme=dark] .admin-success{background:#1b3c35;color:#94e8c5;border-color:#396959}
+:root[data-theme=dark] :is(.danger-link,.video-delete){color:#ffb1a5}
+:root[data-theme=dark] .danger-button{background:#a33332;border-color:#cc6865;color:#fff}
+:root[data-theme=dark] .danger-button:hover:not(:disabled){background:#bd4040}
+:root[data-theme=dark] .toast{background:#234d78;border:1px solid #4b7ca7;color:#fff}
+:root[data-theme=dark] .modal::backdrop{background:#020812ad}
+:root[data-theme=dark] .auth-benefits{color:#bbd0ea}
+:root[data-theme=dark] .auth-line-art div{background:linear-gradient(90deg,#275c7c,transparent)}
+:root[data-theme=dark] :is(.pin-editor,.emoji-popover,.commenter-popover,.project-menu-items){box-shadow:0 8px 28px #0006}
+:root[data-theme=dark] .scrub-preview{background:var(--raised);color:var(--text)}
+:root[data-theme=dark] .video-drop-overlay{background:#152e47f5;color:var(--text)}
+:root[data-theme=dark] .offline-banner{background:#192e44;color:#bbd0ea;border-color:var(--line)}
+:root[data-theme=dark] .offline-settings label{color:var(--text)}

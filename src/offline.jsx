@@ -2,9 +2,11 @@ import React, { useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Upload, Download, Folder, Film, X, Info, RotateCcw } from 'lucide-react';
 import Review from './Review.jsx';
+import ThemeToggle from './ThemeToggle.jsx';
 import { clock, statusClass } from './review-utils.js';
 import './style.css';
 import './offline.css';
+import './theme.css';
 
 const PREFIX = 'pipelife-offline-v1:';
 const sample = { id: 'sample', name: 'Welcome — sample video.mp4', duration: 8, fps: 25, status: 'In review', demo: true, src: __DEMO_VIDEO__, poster: __DEMO_POSTER__ };
@@ -70,7 +72,7 @@ function Demo() {
     const blob = new Blob([JSON.stringify({ video: asset.name, duration: asset.duration, ...read(asset.id) }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = `${asset.name.replace(/\.[^.]+$/, '')}-feedback.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  return <div className="app offline-demo"><header className="topbar"><div className="brand"><span>PIPELIFE</span><i/><span className="brand-subtitle">Video review</span></div><span className="offline-badge">INTERACTIVE DEMO</span><div className="topbar-actions"><button className="secondary export-button" onClick={exportFeedback}><Download size={16}/>Export feedback</button><button className="primary upload-button" disabled={busy} onClick={() => input.current.click()}><Upload size={17}/>{busy ? 'Opening…' : 'Open video'}</button></div></header>
+  return <div className="app offline-demo"><header className="topbar"><div className="brand"><span>PIPELIFE</span><i/><span className="brand-subtitle">Video review</span></div><span className="offline-badge">INTERACTIVE DEMO</span><div className="topbar-actions"><ThemeToggle/><button className="secondary export-button" onClick={exportFeedback}><Download size={16}/>Export feedback</button><button className="primary upload-button" disabled={busy} onClick={() => input.current.click()}><Upload size={17}/>{busy ? 'Opening…' : 'Open video'}</button></div></header>
   <div className="offline-banner"><Info size={16}/><span>Everything stays on your device. {storageAvailable ? 'Feedback is saved in this browser; reopen your video after a refresh.' : 'Browser storage is unavailable. Export feedback before closing.'} Client invitations require the deployed app.</span></div>
   <input className="hidden" ref={input} type="file" accept=".mp4,.webm,video/mp4,video/webm" aria-label="Open local video" onChange={e => { importVideo(e.target.files[0]); e.target.value = ''; }}/>
   <div className="app-body"><aside className="sidebar"><div className="sidebar-heading">YOUR REVIEW SPACE</div><button className="project-button selected"><Folder size={17}/>Local videos<small>{assets.length}</small></button><div className="sidebar-assets">{assets.map(a => <button key={a.id} className={selected === a.id ? 'selected' : ''} onClick={() => navigate(a.id)}><Film size={14}/><span>{a.name}</span></button>)}</div><div className="sidebar-bottom"><span className="eyebrow">Try it for yourself</span><p>Play. Pause. Pin a detail.<br/>Draw directly on a frame.<br/>Leave feedback that’s clear.</p></div></aside>
