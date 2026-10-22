@@ -6,9 +6,10 @@ export const freeStorageBytes = 10_000_000_000;
 const problem = (message, status = 503) => Object.assign(new Error(message), { status, publicMessage: message });
 const validId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,300}$/.test(value);
 // Only provider-issued HTTPS hosts can receive account/upload credentials.
-function providerUrl(value) {
+function providerUrl(value, { upload = false } = {}) {
   const url = new URL(value);
-  if (url.protocol !== 'https:' || !url.hostname.endsWith('.backblazeb2.com') || url.username || url.password || url.port || url.hash) throw problem('Backblaze returned an invalid storage address.');
+  const trustedHost = url.hostname.endsWith('.backblazeb2.com') || upload && /^pod-\d+-\d+-\d+\.backblaze\.com$/.test(url.hostname);
+  if (url.protocol !== 'https:' || !trustedHost || url.username || url.password || url.port || url.hash) throw problem('Backblaze returned an invalid storage address.');
   return url;
 }
 
@@ -89,7 +90,7 @@ export class BackblazeStorage {
       const checksum = sha1.digest('hex');
       for (let attempt = 0; attempt < 2; attempt++) {
         const session = await this.call('b2_get_upload_url', { bucketId: this.bucketId });
-        const url = providerUrl(session.uploadUrl);
+        const url = providerUrl(session.uploadUrl, { upload: true });
         const response = await this.fetch(url, {
           method: 'POST', headers: { Authorization: session.authorizationToken, 'Content-Type': type, 'Content-Length': String(size), 'X-Bz-File-Name': encodeURIComponent(name), 'X-Bz-Content-Sha1': checksum },
           body: createReadStream(filename), duplex: 'half', signal: AbortSignal.timeout(180000), redirect: 'error',

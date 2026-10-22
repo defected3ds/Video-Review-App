@@ -24,7 +24,8 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
         assert.equal(url.pathname, '/b2api/v4/b2_authorize_account');
         return json({ accountId: 'test-account', authorizationToken: accountToken, apiInfo: { storageApi: { apiUrl: 'https://api001.backblazeb2.com', downloadUrl: 'https://f001.backblazeb2.com', allowed: { buckets: [{ id: bucketId, name: 'review-videos' }], namePrefix: null, capabilities: ['listBuckets', 'listFiles', 'readFiles', 'writeFiles', 'deleteFiles'] } } } });
       }
-      if (url.pathname.endsWith('b2_upload_file')) {
+      if (url.pathname.includes('/b2_upload_file/')) {
+        assert.equal(url.hostname, 'pod-031-2032-06.backblaze.com');
         assert.equal(req.headers.authorization, 'test-upload-token'); assert.deepEqual(bytes, video);
         assert.equal(req.headers['x-bz-content-sha1'], createHash('sha1').update(bytes).digest('hex'));
         const fileName = decodeURIComponent(req.headers['x-bz-file-name']); assert.match(fileName, /^pvr\/[^/]+\/[^/]+\.mp4$/);
@@ -36,7 +37,7 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
       assert.equal(req.headers.authorization, accountToken);
       if (url.pathname.endsWith('b2_list_buckets')) return json({ buckets: [{ bucketId, bucketType }] });
       if (url.pathname.endsWith('b2_list_file_versions')) return json({ files: [...files.values(), { contentLength: extraBytes }], nextFileName: null, nextFileId: null });
-      if (url.pathname.endsWith('b2_get_upload_url')) return json({ bucketId, authorizationToken: 'test-upload-token', uploadUrl: 'https://pod001.backblazeb2.com/b2api/v2/b2_upload_file' });
+      if (url.pathname.endsWith('b2_get_upload_url')) return json({ bucketId, authorizationToken: 'test-upload-token', uploadUrl: 'https://pod-031-2032-06.backblaze.com/b2api/v2/b2_upload_file/bucket/session' });
       if (url.pathname.endsWith('b2_delete_file_version')) {
         const value = JSON.parse(bytes); assert.equal(value.fileName, files.get(value.fileId).fileName); files.delete(value.fileId); return json(value);
       }
@@ -114,4 +115,13 @@ test('Backblaze rejects untrusted provider hosts and keys outside the private de
   }
   const unconfigured = new BackblazeStorage({ keyId: '', applicationKey: '', bucketId: '' });
   assert.equal((await unconfigured.status()).configured, false);
+});
+
+test('Upload sessions reject non-HTTPS pods and lookalike domains before sending credentials', async () => {
+  for (const uploadUrl of ['http://pod-031-2032-06.backblaze.com/b2api/v2/b2_upload_file', 'https://pod-031-2032-06.backblaze.com.attacker.example/upload', 'https://www.backblaze.com/upload', 'https://pod-031-2032-06.backblaze.com:8443/upload', 'https://user:secret@pod-031-2032-06.backblaze.com/upload']) {
+    const storage = new BackblazeStorage({ fetcher: async () => { assert.fail('Untrusted upload destination must never receive credentials.'); } });
+    storage.inspect = async () => ({ usedBytes: 0 });
+    storage.call = async () => ({ uploadUrl, authorizationToken: 'test-only-upload-token' });
+    await assert.rejects(storage.upload(path.join(root, 'public/demo.mp4'), 'pvr/test/sample.mp4', 'video/mp4', 42349), /invalid storage address/);
+  }
 });

@@ -64,6 +64,10 @@ In local development, data is stored in ignored `.data/`: SQLite holds projects,
 
 First-run setup asks for your display name and a workspace password of at least 6 characters. The name appears on the shared workspace profile and as the default comment author. Choose the password in the setup form; Render environment variables do not set the workspace password. Setup closes after the first owner is created. There is one shared team password in this prototype. Client names are self-reported, not verified identities. Production requires Supabase and never silently uses local SQLite when the external database fails.
 
+### Administration
+
+Open **Settings** or `/admin` to manage the team display name, change the workspace password, and check private video storage/usage. The page uses the existing workspace sign-in; guest invitation links do not grant settings access. Changing the password requires the current password and rotates the active session while revoking other team sessions. Existing client review links remain active. Profile/password settings persist in SQLite locally or the existing Supabase owner/sessions tables when hosted; no schema migration is required. Storage credentials remain server-only Render environment settings. The uploaded Pipelife/Wienerberger SVG is used on sign-in, workspace, and admin headers.
+
 ## Supabase database
 
 Project URL: `https://hxkssgllgpqcbgvqhqba.supabase.co`.

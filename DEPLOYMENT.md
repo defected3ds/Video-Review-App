@@ -23,7 +23,7 @@ The chosen setup is Render free hosting, the existing Supabase database for revi
    | `B2_BUCKET_ID` | The private bucket's **Bucket ID** |
 
    Keep these values out of chat, source control, browser code, and `VITE_` variables. Save and redeploy. The bucket/account must be created by its owner; the app cannot create the account or recover a lost application key.
-6. Sign into the app, open **Video storage**, and choose **Check connection**. It must say **Video storage connected**. Upload a short H.264 MP4 to verify real bucket access.
+6. Sign into the app, open **Settings → Video storage** at `/admin#storage`, and choose **Check connection**. It must say **Video storage connected**. Upload a short H.264 MP4 to verify real bucket access.
 
 Sources checked October 22, 2026: [Backblaze pricing](https://www.backblaze.com/cloud-storage/pricing), [signup](https://www.backblaze.com/sign-up/cloud-storage), and [caps and alerts](https://www.backblaze.com/docs/cloud-storage-data-caps-and-alerts). Download and API allowances are separate from storage; 10 GB of storage is not unlimited video viewing. The pricing page describes free monthly egress up to three times average stored data, with additional restrictions/caps for non-paying accounts.
 
@@ -34,6 +34,8 @@ The app checks all versions in its private bucket and refuses an upload that wou
 Files up to 250 MB are inspected before upload. The server checks the provider's returned size, SHA-1 checksum, bucket, and filename before creating the review record. Video/thumbnail temporary files are removed after success or failure. Supabase holds the review record and thumbnail; no persistent Render disk is required. If saving a record fails after a confirmed upload, the app attempts to remove only that new upload.
 
 The bucket stays private. Team sessions and scoped guest review links stream media through the app, including byte-range requests for seeking. Clients receive neither application keys nor Backblaze account tokens. The app uses current v4 account authorization and supports application keys restricted to one bucket.
+
+Backblaze uses `*.backblazeb2.com` for API/download endpoints and can return an upload pod such as `pod-031-2032-06.backblaze.com`. The app accepts that numbered pod hostname only for provider-issued upload sessions, with HTTPS and no redirects. It continues to reject arbitrary domains, credentials in URLs, custom ports, and non-HTTPS addresses.
 
 Deleting a project removes review entries, comments, drawings, and invitation links. Cloud originals are preserved, as the confirmation dialog explains. Delete unused files and old versions in Backblaze to reclaim storage; files deleted directly there will no longer play in their reviews.
 
@@ -47,6 +49,10 @@ The container binds to `0.0.0.0` and Render's `PORT`. `/api/health` checks datab
 
 Initial workspace setup requires a display name and a password of at least six characters, chosen in the app. The name is the shared workspace profile/default comment author. Environment variables do not set or reset this password. There is no owner setup code. Existing owner credentials and review data must be preserved.
 
+## Administration
+
+https://pipelife-video-review.onrender.com/admin uses the existing workspace password and session. Team profile and password changes use the current owner/sessions tables; there is no new SQL migration. Password changes require the current password, revoke other team sessions, and keep client review links valid. Storage status, quota usage, and provider/server management links live here. Real provider secrets remain in Render Environment; the admin page never receives or displays them. Anyone using the shared team password has access to this page; individual admin/team roles are not implemented.
+
 ## Live verification
 
 1. Confirm Render has deployed the new commit and `/api/health` returns `{"ok":true}`.
@@ -56,7 +62,7 @@ Initial workspace setup requires a display name and a password of at least six c
 5. Redeploy and confirm the same projects, comments, and cloud video access persist.
 6. Revoke the test invitation; confirm guest metadata and media are denied. Delete the test project and remove its retained cloud video manually if no longer needed.
 
-Local fixtures verify integration behavior but do not establish access to a real Backblaze account. Real upload verification remains pending until the owner supplies the bucket and application key.
+On October 22, 2026, the real configured Backblaze account and private bucket were verified with the application's storage adapter: a generated sample uploaded successfully, private byte-range playback returned the expected bytes, and the temporary test object was removed. Existing owner credentials and customer review records were not changed. The checklist above still applies when verifying the deployed browser workflow or changing provider settings.
 
 ## Legacy Google Drive (optional)
 

@@ -39,7 +39,8 @@ app.use(async(req,res,next) => {
 app.use(express.json({ limit:'128kb' }));
 app.use(async(req,res,next) => {
   const cookie = req.get('cookie')?.split(';').map(v=>v.trim()).find(v=>v.startsWith('pipelife_session='))?.slice(17);
-  req.owner = Boolean(cookie && await store.session(hash(cookie),Date.now()));
+  req.sessionHash = cookie ? hash(cookie) : null;
+  req.owner = Boolean(req.sessionHash && await store.session(req.sessionHash,Date.now()));
   next();
 });
 const requireOwner = (req,res,next) => req.owner ? next() : fail(res,401,'Sign in to access the team workspace.');
@@ -60,16 +61,44 @@ app.post('/api/setup',async(req,res)=>{
   await createSession(req,res); res.status(201).json({authenticated:true,name:name.trim(),maxUploadMB});
 });
 const attempts=new Map();
-app.post('/api/login',async(req,res)=>{
+let credentialWork = Promise.resolve();
+async function withCredentialLock(action) {
+  const previous=credentialWork;let release;credentialWork=new Promise(resolve=>{release=resolve;});
+  await previous;try{return await action();}finally{release();}
+}
+const passwordMatches=(owner,password)=>owner&&typeof password==='string'&&password.length<=200&&timingSafeEqual(scryptSync(password,owner.salt,64),Buffer.from(owner.password_hash,'hex'));
+app.post('/api/login',async(req,res)=>withCredentialLock(async()=>{
   const now=Date.now(), key=req.ip, previous=attempts.get(key);
   const attempt=previous&&previous.reset>now?previous:{count:0,reset:now+15*60000};
   attempts.set(key,attempt);
   if(++attempt.count>10) return fail(res,429,'Too many attempts. Try again in 15 minutes.');
   const owner=await store.owner();
   const password=req.body?.password;
-  if(!owner||typeof password!=='string'||password.length>200||!timingSafeEqual(scryptSync(password,owner.salt,64),Buffer.from(owner.password_hash,'hex'))) return fail(res,401,'The workspace password is incorrect.');
+  if(!passwordMatches(owner,password)) return fail(res,401,'The workspace password is incorrect.');
   attempts.delete(key); await createSession(req,res); res.json({authenticated:true,name:owner.name,maxUploadMB});
+}));
+app.patch('/api/settings/profile',requireOwner,async(req,res)=>{
+  const name=typeof req.body?.name==='string'?req.body.name.trim():'';
+  if(!name||name.length>80)return fail(res,400,'Enter a display name of 1–80 characters.');
+  await store.updateOwnerName(name);res.json({name});
 });
+app.post('/api/settings/password',requireOwner,async(req,res)=>withCredentialLock(async()=>{
+  // A preceding password change may have revoked this request's session while
+  // it waited for the lock. Login and password updates share the same lock.
+  if(!(await store.session(req.sessionHash,Date.now())))return fail(res,401,'Sign in again before changing the password.');
+  const {currentPassword,newPassword}=req.body||{};
+  if(typeof newPassword!=='string'||newPassword.length<6||newPassword.length>200)return fail(res,400,'Choose a new workspace password of 6–200 characters.');
+  const key=`password:${req.ip}`,now=Date.now(),previous=attempts.get(key);
+  const attempt=previous&&previous.reset>now?previous:{count:0,reset:now+15*60000};attempts.set(key,attempt);
+  if(++attempt.count>10)return fail(res,429,'Too many attempts. Try again in 15 minutes.');
+  const owner=await store.owner();
+  if(!passwordMatches(owner,currentPassword))return fail(res,400,'The current workspace password is incorrect.');
+  const salt=randomBytes(16).toString('hex');
+  // Revoke sessions before changing credentials; no login can interleave here.
+  await store.clearAllSessions();
+  await store.updatePassword(salt,scryptSync(newPassword,salt,64).toString('hex'));
+  attempts.delete(key);await createSession(req,res);res.json({authenticated:true,name:owner.name,maxUploadMB});
+}));
 app.post('/api/logout',async(req,res)=>{
   const cookie=req.get('cookie')?.split(';').map(v=>v.trim()).find(v=>v.startsWith('pipelife_session='))?.slice(17);
   if(cookie) await store.deleteSession(hash(cookie));
@@ -96,7 +125,7 @@ app.get('/api/projects/:id/assets',async(req,res)=>{
 });
 const upload=multer({dest:uploads,limits:{fileSize:maxUploadMB*1024*1024,files:1},fileFilter:(req,file,cb)=>cb(null,/\.(mp4|webm)$/i.test(file.originalname))});
 app.post('/api/projects/:id/assets',async(req,res,next)=>{
-  if(store.remote&&!videoStorage.configured&&!(await drive.status()).connected)return fail(res,503,'Connect Backblaze B2 video storage before uploading. Open Video storage for setup instructions.');
+  if(store.remote&&!videoStorage.configured&&!(await drive.status()).connected)return fail(res,503,'Connect Backblaze B2 video storage before uploading. Open Settings → Video storage for setup instructions.');
   if(!(await store.project(req.params.id)))return fail(res,404,'Project not found.');next();
 },upload.single('video'),async(req,res,next)=>{
   if(!req.file)return fail(res,400,`Choose an MP4 or WebM video up to ${maxUploadMB} MB.`);

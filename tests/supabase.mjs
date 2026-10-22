@@ -75,7 +75,17 @@ try {
     await server.stop();server=await startServer(dir,env);assert.deepEqual(await (await request('/api/projects')).json(),[]);
     assert.equal((await request('/api/logout','POST')).status,204);
     assert.equal((await request('/api/projects')).status,401);
-    assert.equal((await request('/api/login','POST',{password:'review'})).status,200);
+    const login=await request('/api/login','POST',{password:'review'});assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0];
+    assert.equal((await request('/api/settings/profile','PATCH',{name:'Remote admin'})).status,200);
+    const oldCookie=cookie;
+    const changed=await request('/api/settings/password','POST',{currentPassword:'review',newPassword:'newpass'});assert.equal(changed.status,200);cookie=changed.headers.get('set-cookie').split(';')[0];
+    assert.equal((await fetch(server.base+'/api/projects',{headers:{cookie:oldCookie}})).status,401);
+    assert.equal((await request('/api/projects')).status,200);
+    await server.stop();server=await startServer(dir,env);
+    assert.equal((await (await request('/api/session')).json()).name,'Remote admin');
+    assert.equal((await request('/api/login','POST',{password:'review'},false)).status,401);
+    assert.equal((await request('/api/login','POST',{password:'newpass'},false)).status,200);
+    console.log('PASS: Supabase profile/password updates persist, revoked sessions are denied, and new credentials work after restart');
     console.log('PASS: PostgreSQL/PostgREST schema repeatability, anonymous denial, owner sessions, project/asset counts, guest feedback, drawings, approvals, resolve, restart with erased local data, cascade deletion, and login');
   }finally{await new Promise(resolve=>gateway.close(resolve));}
 }finally{
