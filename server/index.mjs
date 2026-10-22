@@ -203,6 +203,7 @@ app.post('/api/projects/:id/drive-import',async(req,res)=>{
   if(!(await store.project(req.params.id)))return fail(res,404,'Project not found.');
   const file=await drive.metadata(req.body?.fileId),id=randomUUID();
   const filename=path.join(uploads,`import-${id}`),poster=path.join(uploads,`import-${id}.jpg`);
+  let imported;
   try{
     await drive.download(file.id,filename);
     const {stdout}=await promisify(execFile)('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=avg_frame_rate,codec_name:format=duration','-of','json',filename],{timeout:20000,maxBuffer:65536});
@@ -212,8 +213,9 @@ app.post('/api/projects/:id/drive-import',async(req,res)=>{
     const [n,d]=metadata.streams[0].avg_frame_rate.split('/').map(Number),ext=file.mimeType==='video/webm'?'.webm':'.mp4';
     let name=path.basename(file.name).slice(0,190);if(!name.toLowerCase().endsWith(ext))name+=ext;
     await store.createAsset({id,project_id:req.params.id,name,filename:`${drivePrefix}${file.id}`,size:Number(file.size),duration:Number(metadata.format.duration),fps:Number.isFinite(n/d)&&n/d>0?n/d:25,poster:`${inlinePosterPrefix}${readFileSync(poster).toString('base64')}`});
-    res.status(201).json({...publicAsset(await store.asset(id)),comment_count:0});
+    imported={...publicAsset(await store.asset(id)),comment_count:0};
   }finally{for(const filePath of [filename,poster])if(existsSync(filePath))unlinkSync(filePath);}
+  res.status(201).json(imported);
 });
 const assetRouter=express.Router();
 assetRouter.use('/:assetId',async(req,res,next)=>{
@@ -221,6 +223,15 @@ assetRouter.use('/:assetId',async(req,res,next)=>{
   if(!req.asset)return fail(res,404,'Video not found.');next();
 });
 assetRouter.get('/:assetId',async(req,res)=>res.json(publicAsset(req.asset)));
+assetRouter.post('/:assetId/move',async(req,res)=>{
+  const projectId=req.body?.projectId;
+  if(typeof projectId!=='string'||!projectId.trim()||projectId.length>100)return fail(res,400,'Choose a destination project.');
+  const destination=await store.project(projectId);
+  if(!destination)return fail(res,404,'Destination project not found.');
+  if(req.asset.project_id!==destination.id&&!await store.moveAsset(req.asset.id,req.asset.project_id,destination.id))return fail(res,409,'This video changed while moving. Refresh and try again.');
+  // Only change the project relation. Media references, feedback, and share tokens stay intact.
+  res.json(publicAsset({...req.asset,project_id:destination.id}));
+});
 assetRouter.delete('/:assetId',async(req,res)=>{
   await store.deleteAsset(req.asset.id);
   // Match project deletion: retain cloud originals, which may be used elsewhere.

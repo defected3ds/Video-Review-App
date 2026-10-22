@@ -67,6 +67,7 @@ if (!db.prepare('SELECT id FROM projects LIMIT 1').get() && !db.prepare('SELECT 
       } catch(error) {db.exec('ROLLBACK');throw error;}
     },
     replaceVideo: (id,previous,value) => run('UPDATE assets SET filename=?,size=?,name=? WHERE id=? AND filename=?',value.filename,value.size,value.name,id,previous).changes,
+    moveAsset: (id,previous,project) => run('UPDATE assets SET project_id=? WHERE id=? AND project_id=?',project,id,previous).changes,
     status: (id,status) => run('UPDATE assets SET status=? WHERE id=?',status,id),
     createReview: (token,id,expires) => run('INSERT INTO reviews (token,asset_id,expires_at) VALUES (?,?,?)',token,id,expires),
     review: (token,now) => get('SELECT asset_id FROM reviews WHERE token=? AND expires_at>?',token,now),
@@ -142,6 +143,7 @@ export function supabaseDatabase({url, key, fetcher = fetch, allowLocal = false}
     createAsset:value=>insert('assets',value),
     deleteAsset:id=>remove('assets',{id:`eq.${id}`}),
     replaceVideo:async(id,previous,value)=>(await request('assets',{method:'PATCH',filters:{id:`eq.${id}`,filename:`eq.${previous}`},body:value})).length,
+    moveAsset:async(id,previous,project_id)=>(await request('assets',{method:'PATCH',filters:{id:`eq.${id}`,project_id:`eq.${previous}`},body:{project_id}})).length,
     status:(id,status)=>request('assets',{method:'PATCH',filters:{id:`eq.${id}`},body:{status}}),
     createReview:(token,asset_id,expires_at)=>insert('reviews',{token,asset_id,expires_at}),
     review:(token,now)=>first('reviews',{token:`eq.${token}`,expires_at:`gt.${now}`}),

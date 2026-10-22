@@ -230,6 +230,7 @@ try {
   await page.getByRole('button',{name:'Send comment'}).click();
   await page.getByRole('button',{name:'Mobile feedback',exact:true}).waitFor();
   await page.getByRole('button',{name:'Pin comment',exact:true}).click();
+  await page.locator('.video-stage').scrollIntoViewIfNeeded();
   const mobileBox=await page.locator('.video-overlay').boundingBox();
   await page.mouse.click(mobileBox.x+mobileBox.width*.8,mobileBox.y+mobileBox.height*.5);
   const popup=await page.locator('.pin-editor').boundingBox();

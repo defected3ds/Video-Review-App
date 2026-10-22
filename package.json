@@ -18,7 +18,8 @@
     "test:supabase": "node tests/supabase.mjs",
     "check:supabase": "node scripts/check-supabase.mjs",
     "test:r2:e2e": "node tests/r2-browser.mjs",
-    "test:feedback:e2e": "node tests/feedback-browser.mjs"
+    "test:feedback:e2e": "node tests/feedback-browser.mjs",
+    "test:navigation:e2e": "node tests/navigation-browser.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1155.0",

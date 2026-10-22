@@ -73,6 +73,12 @@ try {
     await database.createAsset({id:'delete-video',project_id:project.id,name:'Disposable.mp4',filename:null,poster:'demo',size:0,duration:8,fps:25});
     const deleteLink=await (await request('/api/assets/delete-video/share','POST')).json();
     await request('/api/assets/delete-video/comments','POST',{author:'A',body:'Delete this review only',time:1});
+    await database.createProject('remote-move','Remote move target');
+    assert.equal((await request('/api/assets/delete-video/move','POST',{projectId:'remote-move'})).status,200);
+    assert.equal((await (await request(`/api/reviews/${deleteLink.token}`,'GET',null,false)).json()).project.id,'remote-move');
+    assert.equal((await database.comments('delete-video')).length,1);
+    assert.equal((await request('/api/assets/delete-video/move','POST',{projectId:project.id})).status,200);
+    await database.deleteProject('remote-move');
     assert.equal((await request('/api/assets/delete-video','DELETE',null,false)).status,401);
     assert.equal((await request('/api/assets/delete-video','DELETE')).status,204);
     assert.equal(await database.asset('delete-video'),undefined);assert.deepEqual(await database.comments('delete-video'),[]);
@@ -90,7 +96,15 @@ try {
     assert.equal(await database.replaceVideo('replacement-video','stale-reference',{filename:newReference,size:9000000,name:'Source.mp4'}),0);
     assert.equal(await database.replaceVideo('replacement-video',oldReference,{filename:newReference,size:9000000,name:'Source.mp4'}),1);
     assert.equal((await database.asset('replacement-video')).size,9000000);assert.equal((await database.asset('replacement-video')).fps,25);
-    await database.deleteProject('replacement-test');
+    await database.createProject('move-destination','Move destination');
+    assert.equal(await database.moveAsset('replacement-video','wrong-source','move-destination'),0);
+    const beforeMove=await database.asset('replacement-video');
+    assert.equal(await database.moveAsset('replacement-video','replacement-test','move-destination'),1);
+    assert.deepEqual(await database.asset('replacement-video'),{...beforeMove,project_id:'move-destination'});
+    await database.deleteProject('replacement-test');assert.ok(await database.asset('replacement-video'));
+    assert.equal((await (await request('/api/assets/replacement-video/move','POST',{projectId:project.id})).status),404);
+    const remoteMove=await request('/api/assets/replacement-video/move','POST',{projectId:'move-destination'});assert.equal(remoteMove.status,200);
+    await database.deleteProject('move-destination');
 
     await server.stop();server=await startServer(dir,env);assert.deepEqual(await (await request('/api/projects')).json(),[]);
     assert.equal((await request('/api/logout','POST')).status,204);
