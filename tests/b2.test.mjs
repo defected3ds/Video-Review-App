@@ -11,7 +11,7 @@ import { startServer, root } from './helpers.mjs';
 test('Backblaze uploads, free limits, and private owner/guest playback', async t => {
   const dir = mkdtempSync(path.join(tmpdir(), 'pvr-b2-')), video = readFileSync(path.join(root, 'public/demo.mp4'));
   const files = new Map(), bucketId = 'test-bucket';
-  let bucketType = 'allPrivate', extraBytes = 0, serial = 0, authorizations = 0, accountToken, expiredMedia = false, server, cookie = '', deleteDuringUpload;
+  let bucketType = 'allPrivate', extraBytes = 0, serial = 0, authorizations = 0, accountToken, expiredMedia = false, downloadCap = false, server, cookie = '', deleteDuringUpload;
   const provider = createServer(async (req, res) => {
     try {
       const url = new URL(req.headers['x-provider-url']), chunks = [];
@@ -42,6 +42,7 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
         const value = JSON.parse(bytes); assert.equal(value.fileName, files.get(value.fileId).fileName); files.delete(value.fileId); return json(value);
       }
       if (url.pathname.endsWith('b2_download_file_by_id')) {
+        if(downloadCap)return json({code:'cap_exceeded',message:'Download bandwidth cap exceeded'},403);
         if (expiredMedia) { expiredMedia = false; return json({ code: 'expired_auth_token' }, 401); }
         assert.ok(files.has(url.searchParams.get('fileId')));
         if (req.headers.range) {
@@ -90,6 +91,18 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
       assert.equal((await request(`/api/reviews/${invitation.token}/comments`, 'POST', { author: 'Client', body: 'Check this frame', time: 2, hotspot: { x: .3, y: .5 }, annotations: [{ color: '#00358e', points: [{ x: .1, y: .2 }, { x: .2, y: .3 }] }] }, false)).status, 201);
       assert.equal((await request(`/api/assets/${asset.id}/video`, 'GET', null, true, { Range: 'garbage' })).status, 416);
       assert.equal((await request(`/api/projects/launch/assets`, 'POST', null, false)).status, 401);
+    });
+    await t.test('download caps explain playback failure without affecting feedback or leaking credentials', async () => {
+      downloadCap=true;
+      const response=await request(`/api/reviews/${invitation.token}/video`,'GET',null,false,{Range:'bytes=0-1'});assert.equal(response.status,503);assert.match((await response.json()).error,/daily download cap/);
+      const issue=await (await request(`/api/reviews/${invitation.token}/playback-status`,'GET',null,false)).json();assert.equal(issue.available,false);assert.equal(issue.code,'download_cap_reached');assert.match(issue.message,/comments and drawings are still available/);
+      assert.equal((await request(`/api/assets/${asset.id}/playback-status`,'GET',null,false)).status,401);
+      assert.equal((await request(`/api/reviews/${invitation.token}/comments`,'GET',null,false)).status,200);
+      const storage=await (await request('/api/storage/status')).json();assert.equal(storage.connected,true);assert.match(storage.playbackWarning,/daily bandwidth cap/);
+      downloadCap=false;
+      const recovered=await request(`/api/assets/${asset.id}/video`,'GET',null,true,{Range:'bytes=0-1'});assert.equal(recovered.status,206);await recovered.arrayBuffer();
+      assert.equal((await (await request(`/api/assets/${asset.id}/playback-status`)).json()).available,true);
+      assert.equal((await (await request('/api/storage/status')).json()).playbackWarning,null);
     });
     await t.test('restart preserves playback/feedback and deletion preserves cloud originals as disclosed', async () => {
       await server.stop(); server = await startServer(dir, env);

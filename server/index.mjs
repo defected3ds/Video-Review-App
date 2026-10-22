@@ -40,25 +40,36 @@ app.use(express.json({ limit:'128kb' }));
 app.use(async(req,res,next) => {
   const cookie = req.get('cookie')?.split(';').map(v=>v.trim()).find(v=>v.startsWith('pipelife_session='))?.slice(17);
   req.sessionHash = cookie ? hash(cookie) : null;
-  req.owner = Boolean(req.sessionHash && await store.session(req.sessionHash,Date.now()));
+  const session=req.sessionHash?await store.session(req.sessionHash,Date.now()):null;
+  req.owner = Boolean(session);
+  req.profile = session?.profile_id?await store.profile(session.profile_id):null;
   next();
 });
 const requireOwner = (req,res,next) => req.owner ? next() : fail(res,401,'Sign in to access the team workspace.');
-async function createSession(req,res) {
+async function createSession(req,res,profileId=req.profile?.id||null) {
   const token = randomBytes(32).toString('hex');
   await store.clearSessions(Date.now());
-  await store.createSession(hash(token),Date.now()+7*86400000);
+  await store.createSession(hash(token),Date.now()+7*86400000,profileId);
   res.cookie('pipelife_session',token,{httpOnly:true,sameSite:'strict',secure:req.secure,path:'/',maxAge:7*86400000});
 }
 app.get('/api/health',async(req,res)=>{if(store.remote)await store.owner();res.json({ok:true});});
-app.get('/api/session',async(req,res)=>res.json({maxUploadMB,authenticated:req.owner,setupRequired:!(await store.owner()),name:req.owner?(await store.owner())?.name:null}));
+const profilesReady=()=>store.profilesReady?store.profilesReady():true;
+const profileSetupMessage='Nickname profiles need the database update in supabase/profiles.sql. Existing workspace sign-in is still available.';
+const nicknameKey=name=>name.normalize('NFKC').toLowerCase();
+async function findOrCreateProfile(name){
+  const key=nicknameKey(name);let profile=await store.profileByKey(key);
+  if(!profile){const value={id:randomUUID(),nickname:name,nickname_key:key};try{await store.createProfile(value);}catch(error){if(error.status!==409)throw error;}profile=await store.profileByKey(key);}
+  await store.touchProfile(profile.id,new Date().toISOString());return profile;
+}
+app.get('/api/session',async(req,res)=>{const owner=await store.owner();res.json({maxUploadMB,profilesEnabled:await profilesReady(),authenticated:req.owner,setupRequired:!owner,name:req.owner?(req.profile?.nickname||owner?.name):null,profileId:req.owner?req.profile?.id||null:null});});
+app.get('/api/people',requireOwner,async(req,res)=>{if(!await profilesReady())return fail(res,503,profileSetupMessage);res.json(await store.profiles());});
 app.post('/api/setup',async(req,res)=>{
   if ((await store.owner())) return fail(res,409,'Workspace is already configured. Sign in instead.');
   const {password,name}=req.body || {};
   if(typeof password!=='string'||password.length<6||password.length>200||typeof name!=='string'||!name.trim()||name.length>80) return fail(res,400,'Enter your name and a workspace password of 6–200 characters.');
   const salt=randomBytes(16).toString('hex');
   await store.createOwner({name:name.trim(),salt,password_hash:scryptSync(password,salt,64).toString('hex')});
-  await createSession(req,res); res.status(201).json({authenticated:true,name:name.trim(),maxUploadMB});
+  const enabled=await profilesReady(),profile=enabled?await findOrCreateProfile(name.trim()):null;await createSession(req,res,profile?.id); res.status(201).json({authenticated:true,profilesEnabled:enabled,name:profile?.nickname||name.trim(),profileId:profile?.id||null,maxUploadMB});
 });
 const attempts=new Map();
 let credentialWork = Promise.resolve();
@@ -75,12 +86,18 @@ app.post('/api/login',async(req,res)=>withCredentialLock(async()=>{
   const owner=await store.owner();
   const password=req.body?.password;
   if(!passwordMatches(owner,password)) return fail(res,401,'The workspace password is incorrect.');
-  attempts.delete(key); await createSession(req,res); res.json({authenticated:true,name:owner.name,maxUploadMB});
+  const name=typeof req.body?.nickname==='string'?req.body.nickname.trim():owner.name;
+  if(!name||name.length>80)return fail(res,400,'Choose a nickname of 1–80 characters.');
+  const enabled=await profilesReady();if(!enabled&&req.body.nickname)return fail(res,503,profileSetupMessage);
+  const profile=enabled?await findOrCreateProfile(name):null;
+  attempts.delete(key); await createSession(req,res,profile?.id); res.json({authenticated:true,profilesEnabled:enabled,name:profile?.nickname||owner.name,profileId:profile?.id||null,maxUploadMB});
 }));
 app.patch('/api/settings/profile',requireOwner,async(req,res)=>{
   const name=typeof req.body?.name==='string'?req.body.name.trim():'';
   if(!name||name.length>80)return fail(res,400,'Enter a display name of 1–80 characters.');
-  await store.updateOwnerName(name);res.json({name});
+  if(req.profile){const existing=await store.profileByKey(nicknameKey(name));if(existing&&existing.id!==req.profile.id)return fail(res,409,'That nickname is already in use. Choose another.');await store.updateProfile(req.profile.id,name,nicknameKey(name));}
+  else await store.updateOwnerName(name);
+  res.json({name});
 });
 app.post('/api/settings/password',requireOwner,async(req,res)=>withCredentialLock(async()=>{
   // A preceding password change may have revoked this request's session while
@@ -97,7 +114,7 @@ app.post('/api/settings/password',requireOwner,async(req,res)=>withCredentialLoc
   // Revoke sessions before changing credentials; no login can interleave here.
   await store.clearAllSessions();
   await store.updatePassword(salt,scryptSync(newPassword,salt,64).toString('hex'));
-  attempts.delete(key);await createSession(req,res);res.json({authenticated:true,name:owner.name,maxUploadMB});
+  attempts.delete(key);await createSession(req,res);res.json({authenticated:true,profilesEnabled:await profilesReady(),name:req.profile?.nickname||owner.name,profileId:req.profile?.id||null,maxUploadMB});
 }));
 app.post('/api/logout',async(req,res)=>{
   const cookie=req.get('cookie')?.split(';').map(v=>v.trim()).find(v=>v.startsWith('pipelife_session='))?.slice(17);
@@ -125,7 +142,7 @@ app.get('/api/projects/:id/assets',async(req,res)=>{
 });
 const upload=multer({dest:uploads,limits:{fileSize:maxUploadMB*1024*1024,files:1},fileFilter:(req,file,cb)=>cb(null,/\.(mp4|webm)$/i.test(file.originalname))});
 app.post('/api/projects/:id/assets',async(req,res,next)=>{
-  if(store.remote&&!videoStorage.configured&&!(await drive.status()).connected)return fail(res,503,'Connect Backblaze B2 video storage before uploading. Open Settings → Video storage for setup instructions.');
+  if(store.remote&&!videoStorage.configured&&!(await drive.status()).connected)return fail(res,503,'Connect Backblaze B2 video storage before uploading. Open /admin → Video storage for setup instructions.');
   if(!(await store.project(req.params.id)))return fail(res,404,'Project not found.');next();
 },upload.single('video'),async(req,res,next)=>{
   if(!req.file)return fail(res,400,`Choose an MP4 or WebM video up to ${maxUploadMB} MB.`);
@@ -205,6 +222,7 @@ const changeStatus=async(req,res)=>{
   if(!['In review','Approved','Changes requested'].includes(req.body?.status))return fail(res,400,'Invalid review status.');
   await store.status(req.asset.id,req.body.status);res.json({...publicAsset(req.asset),status:req.body.status});
 };
+const playbackStatus=(req,res)=>{const issue=req.asset.filename?.startsWith(b2Prefix)?videoStorage.playbackIssue(req.asset.filename):null;res.json({available:!issue,...issue});};
 const serveVideo=async(req,res)=>{
   if(req.asset.filename?.startsWith(b2Prefix))return proxyMedia(signal=>videoStorage.media(req.asset.filename,{range:req.get('range'),signal}),req,res,req.asset.name.toLowerCase().endsWith('.webm')?'video/webm':'video/mp4');
   if(req.asset.filename?.startsWith(drivePrefix))return proxyMedia(signal=>drive.media(req.asset.filename.slice(drivePrefix.length),{range:req.get('range'),signal}),req,res,req.asset.name.toLowerCase().endsWith('.webm')?'video/webm':'video/mp4');
@@ -229,6 +247,7 @@ const addComment=async(req,res)=>{
 };
 assetRouter.patch('/:assetId',changeStatus);
 assetRouter.get('/:assetId/video',serveVideo);
+assetRouter.get('/:assetId/playback-status',playbackStatus);
 assetRouter.get('/:assetId/poster',servePoster);
 assetRouter.get('/:assetId/comments',listComments);
 assetRouter.post('/:assetId/comments',addComment);
@@ -245,7 +264,7 @@ guest.use(async(req,res,next)=>{
   req.asset=await store.asset(review.asset_id);next();
 });
 guest.get('/',async(req,res)=>res.json({asset:publicAsset(req.asset),project:await store.project(req.asset.project_id)}));
-guest.get('/video',serveVideo);guest.get('/poster',servePoster);guest.get('/comments',listComments);guest.post('/comments',addComment);guest.patch('/status',changeStatus);
+guest.get('/playback-status',playbackStatus);guest.get('/video',serveVideo);guest.get('/poster',servePoster);guest.get('/comments',listComments);guest.post('/comments',addComment);guest.patch('/status',changeStatus);
 app.use('/api/reviews/:token',guest);
 app.use('/api',async(req,res)=>fail(res,404,'Endpoint not found.'));
 app.use(express.static(path.join(root,'dist')));

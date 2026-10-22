@@ -17,6 +17,7 @@ export class BackblazeStorage {
   constructor({ keyId = process.env.B2_KEY_ID, applicationKey = process.env.B2_APPLICATION_KEY, bucketId = process.env.B2_BUCKET_ID, fetcher = fetch } = {}) {
     this.keyId = keyId; this.applicationKey = applicationKey; this.bucketId = bucketId; this.fetch = fetcher;
     this.configured = Boolean(keyId && applicationKey && validId(bucketId));
+    this.playbackIssues = new Map();
   }
   async authorize(force = false) {
     if (!this.configured) throw problem('Video storage is not connected. Add the Backblaze B2 settings in Render.');
@@ -73,7 +74,7 @@ export class BackblazeStorage {
   }
   async status() {
     if (!this.configured) return { provider: 'backblaze', configured: false, connected: false, maxBytes: freeStorageBytes };
-    try { return { provider: 'backblaze', configured: true, connected: true, ...await this.inspect() }; }
+    try { return { provider: 'backblaze', configured: true, connected: true, ...await this.inspect(), playbackWarning: this.downloadCapUntil > Date.now() ? 'Backblaze has stopped downloads because the daily bandwidth cap was reached. Playback can resume after the daily reset. Storage connection checks do not test download allowance.' : null }; }
     catch (error) { return { provider: 'backblaze', configured: true, connected: false, maxBytes: freeStorageBytes, message: error.publicMessage || 'Video storage could not be reached. Try again.' }; }
   }
   async upload(filename, name, type, size) {
@@ -117,8 +118,20 @@ export class BackblazeStorage {
       const url = new URL('/b2api/v2/b2_download_file_by_id', account.downloadUrl); url.searchParams.set('fileId', fileId);
       const response = await this.fetch(url, { headers: { Authorization: account.authorizationToken, ...(range ? { Range: range } : {}) }, signal, redirect: 'error' });
       if (response.status === 401 && attempt === 0) { await response.body?.cancel(); continue; }
+      if (!response.ok && response.status !== 416) {
+        let detail; try { detail = await response.json(); } catch { await response.body?.cancel().catch(() => {}); }
+        const capped = ['cap_exceeded', 'download_cap_exceeded'].includes(detail?.code);
+        const message = capped ? 'Backblaze’s daily download cap has been reached. Video playback is paused until the daily reset. Your comments and drawings are still available.' : 'Video storage is unavailable. Check the Backblaze connection, permissions, and usage caps.';
+        const code = capped ? 'download_cap_reached' : 'storage_unavailable';
+        this.playbackIssues.set(reference, { code, message });
+        if(capped)this.downloadCapUntil=Date.now()+3600000;
+        const error=problem(message);error.code=code;throw error;
+      }
+      this.playbackIssues.delete(reference);
+      this.downloadCapUntil=0;
       return response;
     }
   }
+  playbackIssue(reference) { return this.playbackIssues.get(reference) || null; }
   async remove(reference) { return this.call('b2_delete_file_version', this.reference(reference)); }
 }

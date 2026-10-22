@@ -41,7 +41,7 @@ test('Admin settings require the owner and persist profile/password changes with
     await t.test('new credentials and profile survive restart', async () => {
       await server.stop(); server = await startServer(dir);
       assert.equal((await (await request('/api/session')).json()).name, 'Anna');
-      const login = await request('/api/login', 'POST', { password: 'newpass' }, ''); assert.equal(login.status, 200); assert.equal((await login.json()).name, 'Anna');
+      const login = await request('/api/login', 'POST', { password: 'newpass', nickname: 'Anna' }, ''); assert.equal(login.status, 200); assert.equal((await login.json()).name, 'Anna');
       assert.equal((await request('/api/setup', 'POST', { name: 'Replacement', password: 'review' }, '')).status, 409);
     });
   } finally { await server.stop(); rmSync(dir, { recursive: true, force: true }); }

@@ -26,6 +26,7 @@ try {
   execFileSync('docker',['exec','-i',pg,'psql','-U','postgres','-v','ON_ERROR_STOP=1'],{input:roles+'\n'+readFileSync('supabase/schema.sql','utf8'),stdio:['pipe','pipe','pipe']});
   // Applying the schema again must be safe.
   execFileSync('docker',['exec','-i',pg,'psql','-U','postgres','-v','ON_ERROR_STOP=1'],{input:readFileSync('supabase/schema.sql','utf8'),stdio:['pipe','pipe','pipe']});
+  for(let i=0;i<2;i++)execFileSync('docker',['exec','-i',pg,'psql','-U','postgres','-v','ON_ERROR_STOP=1'],{input:readFileSync('supabase/profiles.sql','utf8'),stdio:['pipe','pipe','pipe']});
   docker('run','--rm','-d','--name',rest,'--network',network,'-p','127.0.0.1::3000','-e',`PGRST_DB_URI=postgres://postgres@${pg}:5432/postgres`,'-e','PGRST_DB_ANON_ROLE=anon','-e',`PGRST_JWT_SECRET=${secret}`,'postgrest/postgrest:v13.0.7');
   const port=docker('port',rest,'3000/tcp').split(':').at(-1),url=`http://127.0.0.1:${port}`;
   for(let i=0;;i++) {
@@ -46,6 +47,7 @@ try {
   try {
     const anonymous=await fetch(url+'/pvr_owner');assert.equal(anonymous.status,401);
     assert.equal((await fetch(url+'/pvr_connections')).status,401);
+    assert.equal((await fetch(url+'/pvr_profiles')).status,401);
     await database.saveConnection('oauth:test','encrypted-state',Date.now()+60000);
     await database.saveConnection('oauth:test','updated-state',Date.now()+60000);
     assert.equal((await database.consumeConnection('oauth:test')).payload,'updated-state');
@@ -86,6 +88,25 @@ try {
     assert.equal((await (await request('/api/session')).json()).name,'Remote admin');
     assert.equal((await request('/api/login','POST',{password:'review'},false)).status,401);
     assert.equal((await request('/api/login','POST',{password:'newpass'},false)).status,200);
+    assert.equal((await (await request('/api/people')).json()).length,2);
+    const newPerson=await request('/api/login','POST',{nickname:'Remote client',password:'newpass'},false);assert.equal(newPerson.status,200);const person=await newPerson.json();assert.equal(person.name,'Remote client');
+    const returning=await (await request('/api/login','POST',{nickname:'REMOTE CLIENT',password:'newpass'},false)).json();assert.equal(returning.profileId,person.profileId);
+    await server.stop();
+    // Existing deployments can keep signing in before the additive profile migration.
+    execFileSync('docker',['exec','-i',pg,'psql','-U','postgres','-v','ON_ERROR_STOP=1'],{input:"ALTER TABLE public.pvr_sessions DROP COLUMN profile_id; DROP TABLE public.pvr_profiles; NOTIFY pgrst, 'reload schema';",stdio:['pipe','pipe','pipe']});
+    server=await startServer(dir,env);
+    const legacySession=await (await request('/api/session')).json();assert.equal(legacySession.authenticated,true);assert.equal(legacySession.profilesEnabled,false);
+    assert.equal((await request('/api/login','POST',{password:'wrong'},false)).status,401);
+    assert.equal((await request('/api/login','POST',{password:'newpass'},false)).status,200);
+    assert.equal((await request('/api/login','POST',{nickname:'New profile',password:'newpass'},false)).status,503);
+    assert.equal((await request('/api/projects')).status,200);
+    assert.equal((await request('/api/people')).status,503);
+    await server.stop();
+    execFileSync('docker',['exec','-i',pg,'psql','-U','postgres','-v','ON_ERROR_STOP=1'],{input:readFileSync('supabase/profiles.sql','utf8'),stdio:['pipe','pipe','pipe']});
+    server=await startServer(dir,env);
+    assert.equal((await (await request('/api/session')).json()).profilesEnabled,true);
+    assert.equal((await request('/api/login','POST',{nickname:'New profile',password:'newpass'},false)).status,200);
+    console.log('PASS: pre-migration password sign-in remains active; additive migration enables nickname profiles without changing credentials');
     console.log('PASS: Supabase profile/password updates persist, revoked sessions are denied, and new credentials work after restart');
     console.log('PASS: PostgreSQL/PostgREST schema repeatability, anonymous denial, owner sessions, project/asset counts, guest feedback, drawings, approvals, resolve, restart with erased local data, cascade deletion, and login');
   }finally{await new Promise(resolve=>gateway.close(resolve));}
