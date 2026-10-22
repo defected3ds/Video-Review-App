@@ -8,6 +8,7 @@ import { mkdirSync, existsSync, unlinkSync, readFileSync, createWriteStream, sta
 import { proxyMedia } from './media.mjs';
 import { GoogleDrive, drivePrefix, inlinePosterPrefix } from './drive.mjs';
 import { BackblazeStorage, b2Prefix } from './b2.mjs';
+import { R2Storage, r2Prefix } from './r2.mjs';
 import path from 'node:path';
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -21,11 +22,14 @@ const uploads = path.join(data, 'uploads');
 mkdirSync(uploads, { recursive: true });
 const store = process.env.SUPABASE_URL ? supabaseDatabase({url:process.env.SUPABASE_URL,key:process.env.SUPABASE_SECRET_KEY,allowLocal:process.env.SUPABASE_ALLOW_LOCAL_TEST==='1'}) : localDatabase(data);
 const drive=new GoogleDrive(store,{allowLocal:process.env.DRIVE_ALLOW_LOCAL_TEST==='1'});
-const videoStorage=new BackblazeStorage();
+const b2Storage=new BackblazeStorage();
+const r2Storage=new R2Storage(process.env.NODE_ENV==='test'&&process.env.R2_TEST_ENDPOINT?{endpoint:process.env.R2_TEST_ENDPOINT,allowLocal:true}:{});
+const videoStorage=r2Storage.requested?r2Storage:b2Storage;
+const sourceStorage=filename=>filename?.startsWith(r2Prefix)?r2Storage:filename?.startsWith(b2Prefix)?b2Storage:null;
 const maxUploadMB=250;
 const hash = value => createHash('sha256').update(value).digest('hex');
-const isReviewCopy=filename=>Boolean(filename?.startsWith(b2Prefix)&&/-review\.(mp4|webm)$/.test(videoStorage.reference(filename).fileName));
-const publicAsset = ({ filename, poster, ...asset }) => ({ ...asset, hasPoster: Boolean(poster), demo: !filename, inDrive: Boolean(filename?.startsWith(drivePrefix)), inB2: Boolean(filename?.startsWith(b2Prefix)),reviewCopy:isReviewCopy(filename) });
+const isReviewCopy=filename=>{const provider=sourceStorage(filename);if(!provider)return false;const ref=provider.reference(filename);return /-review\.(mp4|webm)$/.test(typeof ref==='string'?ref:ref.fileName);};
+const publicAsset = ({ filename, poster, ...asset }) => ({ ...asset, hasPoster: Boolean(poster), demo: !filename, inDrive: Boolean(filename?.startsWith(drivePrefix)), inB2: Boolean(filename?.startsWith(b2Prefix)),inR2:Boolean(filename?.startsWith(r2Prefix)),reviewCopy:isReviewCopy(filename) });
 const serializeComment = row => ({ ...row, annotations: JSON.parse(row.annotations), hotspot: row.hotspot ? JSON.parse(row.hotspot) : null, resolved: Boolean(row.resolved) });
 const fail = (res, code, error) => res.status(code).json({ error });
 const app = express();
@@ -146,7 +150,7 @@ app.get('/api/projects/:id/assets',async(req,res)=>{
 });
 const upload=multer({dest:uploads,limits:{fileSize:maxUploadMB*1024*1024,files:1},fileFilter:(req,file,cb)=>cb(null,/\.(mp4|webm)$/i.test(file.originalname))});
 app.post('/api/projects/:id/assets',async(req,res,next)=>{
-  if(store.remote&&!videoStorage.configured&&!(await drive.status()).connected)return fail(res,503,'Connect Backblaze B2 video storage before uploading. Open /admin → Video storage for setup instructions.');
+  if((r2Storage.requested&&!r2Storage.configured)||(store.remote&&!videoStorage.configured&&!(await drive.status()).connected))return fail(res,503,'Connect Cloudflare R2 video storage in /admin before uploading. Open /admin → Video storage for setup instructions.');
   if(!(await store.project(req.params.id)))return fail(res,404,'Project not found.');next();
 },upload.single('video'),async(req,res,next)=>{
   if(!req.file)return fail(res,400,`Choose an MP4 or WebM video up to ${maxUploadMB} MB.`);
@@ -180,13 +184,13 @@ app.post('/api/projects/:id/assets',async(req,res,next)=>{
       catch(error){await drive.removeNewUpload(uploaded.id).catch(()=>{});throw error;}
       for(const file of [req.file.path,path.join(uploads,poster)])if(existsSync(file))unlinkSync(file);
     }else{
-      if(store.remote)throw Object.assign(new Error('Connect Backblaze B2 video storage before uploading.'),{status:503,publicMessage:'Connect Backblaze B2 video storage before uploading.'});
+      if(store.remote)throw Object.assign(new Error('Connect Cloudflare R2 video storage in /admin before uploading.'),{status:503,publicMessage:'Connect Cloudflare R2 video storage in /admin before uploading.'});
       await store.createAsset({id,project_id:req.params.id,name:path.basename(req.file.originalname).slice(0,200),filename,size:req.file.size,duration:Number(metadata.format.duration),fps:Number.isFinite(n/d)&&n/d>0?n/d:25,poster:posterRef});
     }
     res.status(201).json({...publicAsset(await store.asset(id)),comment_count:0});
   }catch(error){for(const file of [req.file.path,path.join(uploads,poster)])if(existsSync(file))unlinkSync(file);next(error);}
 });
-app.get('/api/storage/status',requireOwner,async(req,res)=>res.json(await videoStorage.status()));
+app.get('/api/storage/status',requireOwner,async(req,res)=>res.json({...await videoStorage.status(),r2Requested:r2Storage.requested,r2Configured:r2Storage.configured,b2Configured:b2Storage.configured}));
 app.get('/api/reviews',requireOwner,async(req,res)=>res.json((await store.reviewAssets()).map(publicAsset)));
 // Drive authorization is owner-only. The callback uses a one-time, expiring state
 // plus PKCE; it does not rely on cookies being sent from Google's origin.
@@ -220,31 +224,37 @@ assetRouter.use('/:assetId',async(req,res,next)=>{
   if(!req.asset)return fail(res,404,'Video not found.');next();
 });
 assetRouter.get('/:assetId',async(req,res)=>res.json(publicAsset(req.asset)));
-assetRouter.post('/:assetId/optimize',async(req,res)=>withVideoWork(async()=>{
+const convertVideo=(moving=false)=>async(req,res)=>withVideoWork(async()=>{
   const asset=await store.asset(req.asset.id);
   if(!asset)return fail(res,404,'Video not found.');
-  if(!asset.filename?.startsWith(b2Prefix))return fail(res,400,'Only Backblaze videos can be optimized here.');
-  if(isReviewCopy(asset.filename))return res.json({asset:publicAsset(asset),bytesSaved:0,alreadyOptimized:true});
+  const origin=sourceStorage(asset.filename),destination=moving?r2Storage:origin;
+  if(!origin)return fail(res,400,'Only cloud videos can be processed here.');
+  if(moving&&!r2Storage.configured)return fail(res,503,'Finish the Cloudflare R2 settings in Render before moving videos.');
+  if(moving)await r2Storage.inspect();
+  if(moving&&asset.filename.startsWith(r2Prefix))return res.json({asset:publicAsset(asset),bytesSaved:0,alreadyMoved:true});
+  if(!moving&&isReviewCopy(asset.filename))return res.json({asset:publicAsset(asset),bytesSaved:0,alreadyOptimized:true});
   const source=path.join(uploads,randomUUID()+'.source'),output=source+'.review.mp4';let uploaded;
   try{
     // One source download is needed. A capped account fails here before any changes.
-    const controller=AbortSignal.timeout(180000),response=await videoStorage.media(asset.filename,{signal:controller});
+    const controller=AbortSignal.timeout(180000),response=await origin.media(asset.filename,{signal:controller});
     if(response.status!==200||!response.body){await response.body?.cancel();return fail(res,503,'Unable to read the original video for compression.');}
     let received=0;
     const limit=new Transform({transform(chunk,encoding,done){received+=chunk.length;if(received>maxUploadMB*1024*1024)done(Object.assign(new Error('Video exceeds the processing size limit.'),{status:413,publicMessage:'Video exceeds the processing size limit.'}));else done(null,chunk);}});
     await pipeline(Readable.fromWeb(response.body),limit,createWriteStream(source),{signal:controller});
     if(asset.size&&statSync(source).size!==asset.size)return fail(res,503,'The source download was incomplete. Your existing video is unchanged.');
-    const copy=await reviewCopy(source,output,{duration:asset.duration,fps:asset.fps,extension:path.extname(asset.name).toLowerCase()});
-    uploaded=await videoStorage.upload(copy.path,`pvr/${asset.project_id}/${asset.id}-review${copy.extension}`,copy.extension==='.webm'?'video/webm':'video/mp4',copy.size);
+    const copy=isReviewCopy(asset.filename)?{path:source,size:statSync(source).size,extension:path.extname(asset.name).toLowerCase()}:await reviewCopy(source,output,{duration:asset.duration,fps:asset.fps,extension:path.extname(asset.name).toLowerCase()});
+    uploaded=await destination.upload(copy.path,`pvr/${asset.project_id}/${asset.id}-${randomUUID()}-review${copy.extension}`,copy.extension==='.webm'?'video/webm':'video/mp4',copy.size);
     const replacement={filename:uploaded,size:copy.size,name:path.basename(asset.name,path.extname(asset.name)).slice(0,190)+copy.extension};
     if(!await store.replaceVideo(asset.id,asset.filename,replacement))throw Object.assign(new Error('The video changed during processing. Refresh and try again.'),{status:409});
     const saved=Math.max(0,asset.size-copy.size);uploaded=null;
-    res.json({asset:publicAsset({...asset,...replacement}),bytesSaved:saved});
+    res.json({asset:publicAsset({...asset,...replacement}),bytesSaved:saved,moved:moving});
   }finally{
-    if(uploaded)await videoStorage.remove(uploaded).catch(()=>{});
+    if(uploaded)await destination.remove(uploaded).catch(()=>{});
     for(const file of [source,output])if(existsSync(file))unlinkSync(file);
   }
-}));
+});
+assetRouter.post('/:assetId/optimize',convertVideo());
+assetRouter.post('/:assetId/migrate-r2',convertVideo(true));
 assetRouter.post('/:assetId/share',async(req,res)=>{
   const token=randomBytes(24).toString('hex'),expiresAt=Date.now()+7*86400000;
   await store.createReview(hash(token),req.asset.id,expiresAt);
@@ -255,9 +265,10 @@ const changeStatus=async(req,res)=>{
   if(!['In review','Approved','Changes requested'].includes(req.body?.status))return fail(res,400,'Invalid review status.');
   await store.status(req.asset.id,req.body.status);res.json({...publicAsset(req.asset),status:req.body.status});
 };
-const playbackStatus=(req,res)=>{const issue=req.asset.filename?.startsWith(b2Prefix)?videoStorage.playbackIssue(req.asset.filename):null;res.json({available:!issue,...issue});};
+const playbackStatus=(req,res)=>{const issue=req.asset.filename?.startsWith(b2Prefix)?b2Storage.playbackIssue(req.asset.filename):null;res.json({available:!issue,...issue});};
 const serveVideo=async(req,res)=>{
-  if(req.asset.filename?.startsWith(b2Prefix))return proxyMedia(signal=>videoStorage.media(req.asset.filename,{range:req.get('range'),signal}),req,res,req.asset.name.toLowerCase().endsWith('.webm')?'video/webm':'video/mp4');
+  if(req.asset.filename?.startsWith(r2Prefix)){if(req.get('range')&&!/^bytes=\d*-\d*$/.test(req.get('range')))return res.status(416).end();const playback=await r2Storage.playback(req.asset.filename);return res.redirect(307,playback.url);}
+  if(req.asset.filename?.startsWith(b2Prefix))return proxyMedia(signal=>b2Storage.media(req.asset.filename,{range:req.get('range'),signal}),req,res,req.asset.name.toLowerCase().endsWith('.webm')?'video/webm':'video/mp4');
   if(req.asset.filename?.startsWith(drivePrefix))return proxyMedia(signal=>drive.media(req.asset.filename.slice(drivePrefix.length),{range:req.get('range'),signal}),req,res,req.asset.name.toLowerCase().endsWith('.webm')?'video/webm':'video/mp4');
   const filename=req.asset.filename?path.join(uploads,req.asset.filename):path.join(root,'public','demo.mp4');
   if(!existsSync(filename))return fail(res,404,'Video is unavailable. Run npm run prepare:demo to restore the sample.');

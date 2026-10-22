@@ -1,0 +1,47 @@
+import {createServer} from 'node:http';
+import {chromium} from 'playwright';
+import assert from 'node:assert/strict';
+import {mkdtempSync,readFileSync,existsSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {startServer,root} from './helpers.mjs';
+
+const dir=mkdtempSync(path.join(tmpdir(),'pvr-r2-browser-')),server=await startServer(dir);
+const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE||(existsSync('/usr/bin/chromium')?'/usr/bin/chromium':undefined),args:['--no-sandbox']});
+const video=readFileSync(path.join(root,'public/demo.mp4')),errors=[];let cloudReads=0;
+const cloudServer=createServer((req,res)=>{cloudReads++;const match=req.headers.range?.match(/^bytes=(\d+)-(\d*)$/),start=match?Number(match[1]):0,end=match&&match[2]?Math.min(video.length-1,Number(match[2])):video.length-1;res.writeHead(match?206:200,{'content-type':'video/mp4','accept-ranges':'bytes','content-length':String(end-start+1),...(match?{'content-range':`bytes ${start}-${end}/${video.length}`}:{})});res.end(video.subarray(start,end+1));});
+await new Promise(resolve=>cloudServer.listen(0,'127.0.0.1',resolve));const cloudBase=`http://127.0.0.1:${cloudServer.address().port}`;
+try{
+  const context=await browser.newContext({viewport:{width:1366,height:768}}),page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
+  await context.request.post(server.base+'/api/setup',{data:{name:'R2 Reviewer',password:'review'}});
+  const asset=await (await context.request.get(server.base+'/api/assets/demo')).json();
+  await page.route('**/api/projects/launch/assets',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{...asset,inR2:true,inB2:false,reviewCopy:true}])}));
+  let issued=0;
+  await page.route('**/api/assets/demo/video',route=>route.fulfill({status:307,headers:{location:`${cloudBase}/review.mp4?temporary-token=${++issued}`}}));
+  await page.goto(server.base);await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2);assert.ok(cloudReads>0);
+  await page.getByRole('button',{name:'Play video',exact:true}).click();await page.waitForFunction(()=>document.querySelector('video').currentTime>.2);await page.getByRole('button',{name:'Pause video',exact:true}).click();
+  await page.locator('video').evaluate(el=>{el.currentTime=3;});await page.waitForFunction(()=>!document.querySelector('video').seeking&&Math.abs(document.querySelector('video').currentTime-3)<.05);
+  await page.getByLabel('Comment',{exact:true}).fill('Preserve this frame and draft 👍');
+  const before=issued;
+  await page.evaluate(()=>{const original=Date.now.bind(Date);Date.now=()=>original()+360000;document.querySelector('video').dispatchEvent(new Event('error'));});
+  await page.waitForFunction(()=>document.querySelector('video')?.readyState>=2&&Math.abs(document.querySelector('video').currentTime-3)<.05&&!document.querySelector('.video-message.error'));
+  assert.ok(issued>before);assert.equal(await page.getByLabel('Comment',{exact:true}).inputValue(),'Preserve this frame and draft 👍');
+  await page.getByRole('button',{name:'Send comment',exact:true}).click();await page.getByRole('button',{name:'Preserve this frame and draft 👍',exact:true}).waitFor();
+  console.log('PASS: direct cross-origin range playback; expired playback link renewal keeps the selected frame and unsent comment');
+  const share=await (await context.request.post(server.base+'/api/assets/demo/share')).json();
+  const guest=await browser.newContext(),client=await guest.newPage();client.on('pageerror',e=>errors.push(e.message));
+  await client.route('**/api/reviews/'+share.token,async route=>{const response=await route.fetch(),data=await response.json();data.asset.inR2=true;await route.fulfill({response,json:data});});
+  await client.route('**/api/reviews/'+share.token+'/video',route=>route.fulfill({status:307,headers:{location:`${cloudBase}/shared.mp4?temporary-token=${++issued}`}}));
+  await client.goto(server.base+'/?review='+share.token);await client.waitForFunction(()=>document.querySelector('video')?.readyState>=2);await client.getByRole('button',{name:'Preserve this frame and draft 👍',exact:true}).waitFor();
+  await context.request.delete(server.base+'/api/assets/demo/share');await client.unroute('**/api/reviews/'+share.token+'/video');
+  await client.evaluate(()=>{const original=Date.now.bind(Date);Date.now=()=>original()+360000;document.querySelector('video').dispatchEvent(new Event('error'));});
+  await client.getByRole('alert').filter({hasText:'expired or been revoked'}).waitFor();await guest.close();
+  console.log('PASS: revoked guest access cannot renew an expired R2 playback link');
+  await page.route('**/api/storage/status',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({provider:'r2',configured:true,connected:true,r2Configured:true,maxBytes:1e10,usedBytes:119000000})}));
+  await page.route('**/api/reviews',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{...asset,inB2:true,inR2:false,reviewCopy:false,size:119000000,project_name:'Autumn campaign'}])}));
+  await page.route('**/api/assets/demo/migrate-r2',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({moved:true,bytesSaved:110000000,asset:{...asset,inR2:true,inB2:false,reviewCopy:true,size:9000000}})}));
+  await page.goto(server.base+'/admin');await page.getByRole('heading',{name:'Cloudflare R2 setup',exact:true}).waitFor();
+  await page.getByRole('button',{name:/Move Welcome.*to Cloudflare R2/}).click();await page.getByText('Video moved to Cloudflare R2. Comments and links are preserved.',{exact:true}).waitFor();await page.getByText('Review copy ready',{exact:true}).waitFor();
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  assert.deepEqual(errors,[]);console.log('PASS: authenticated R2 setup and migration controls; no browser exceptions');
+}finally{await browser.close();await new Promise(resolve=>cloudServer.close(resolve));await server.stop();rmSync(dir,{recursive:true,force:true});}

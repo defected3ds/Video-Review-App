@@ -7,6 +7,7 @@ function Spinner() { return <LoaderCircle className="spin" size={18}/>; }
 export default function Review({ asset, base, guest, ownerName, onError, onDirty, onNotice, children, request = defaultApi, videoSrc, posterSrc }) {
   const api = request;
   const video = useRef(), stage = useRef(), overlay = useRef(), stroke = useRef(null), commentsList = useRef(), commentInput = useRef(), pinInput = useRef();
+  const playback=useRef({loadedAt:0,retriedAt:0,restore:null,resumeOnSeek:false});
   const scrub = useRef({active:false,target:0,timer:null,last:0,final:null,previewTarget:null});
   const [time, setTime] = useState(0), [duration, setDuration] = useState(asset.duration), [playing, setPlaying] = useState(false), [muted, setMuted] = useState(false), [ready, setReady] = useState(false), [videoError, setVideoError] = useState(false), [mediaBox, setMediaBox] = useState({ left: 0, top: 0, width: '100%', height: '100%' });
   const [comments, setComments] = useState([]), [commentsLoading, setCommentsLoading] = useState(true), [filter, setFilter] = useState('All'), [selectedId, setSelectedId] = useState(null), [tool, setTool] = useState(null), [color, setColor] = useState(colors[0]);
@@ -57,7 +58,7 @@ export default function Review({ asset, base, guest, ownerName, onError, onDirty
   }
   function changeTimeline(event){const target=clampTime(Number(event.target.value));setSelectedId(null);if(scrub.current.active){scrub.current.target=target;setScrubTime(target);previewSeek();}else seek(target);}
   function finishScrub(){if(!scrub.current.active)return;const target=scrub.current.target;clearTimeout(scrub.current.timer);scrub.current.active=false;scrub.current.final=target;video.current.currentTime=target;setTime(target);if(!video.current.seeking){scrub.current.final=null;setScrubTime(null);}}
-  function finishSeek(){if(scrub.current.active){previewSeek();return;}scrub.current.final=null;setScrubTime(null);setTime(video.current.currentTime);}
+  function finishSeek(){if(scrub.current.active){previewSeek();return;}scrub.current.final=null;setScrubTime(null);setTime(video.current.currentTime);if(playback.current.resumeOnSeek){playback.current.resumeOnSeek=false;video.current.play().catch(()=>onNotice('Playback renewed. Press Play to continue.'));}}
   function updateBody(value){if(draftTime===null&&value.trim())setDraftTime(clampTime(video.current.currentTime));if(!value.trim()&&!hotspot)setDraftTime(null);setBody(value);}
   function insertEmoji(emoji,ref){
     const input=ref.current,start=input?.selectionStart??body.length,end=input?.selectionEnd??start,value=body.slice(0,start)+emoji+body.slice(end);
@@ -95,14 +96,28 @@ export default function Review({ asset, base, guest, ownerName, onError, onDirty
   }
   async function resolve(comment) { try { const value = await api(`${base}/comments/${comment.id}`, json('PATCH', { resolved: !comment.resolved })); setComments(previous => previous.map(c => c.id === value.id ? value : c)); } catch (e) { onError(e.message); } }
   async function togglePlay() { if (video.current.paused) { setTool(null); try { await video.current.play(); } catch { onError('Unable to play this video. Try a browser-compatible H.264 MP4.'); } } else video.current.pause(); }
-  async function playbackFailed(){
-    setVideoError('This video cannot be played. Check its storage connection or try an H.264 MP4 / WebM.');setReady(false);setPlaying(false);scrub.current.final=null;setScrubTime(null);
-    try{const status=await api(`${base}/playback-status`);if(status.message)setVideoError(status.message);}catch{}
+  function metadataLoaded(event){
+    const el=event.currentTarget;playback.current.loadedAt=Date.now();setDuration(el.duration);setReady(true);setVideoError(false);
+    const restore=playback.current.restore;playback.current.restore=null;
+    if(restore){const target=Math.max(0,Math.min(el.duration-1/fps,restore.time));setTime(target);if(Math.abs(el.currentTime-target)>.001){playback.current.resumeOnSeek=restore.play;el.currentTime=target;}else if(restore.play)el.play().catch(()=>onNotice('Playback renewed. Press Play to continue.'));}
   }
-  function retryPlayback(){setVideoError(false);setReady(false);video.current.load();}
+  function reloadPlayback(resume=false){
+    playback.current.restore={time:Number.isFinite(video.current.currentTime)?video.current.currentTime:time,play:resume};
+    scrub.current.active=false;scrub.current.final=null;clearTimeout(scrub.current.timer);setScrubTime(null);setVideoError(false);setReady(false);video.current.load();
+  }
+  async function playbackFailed(){
+    // R2 URLs are short lived. Renew through the authorized app endpoint only
+    // after a previously working URL is old enough to have expired.
+    const now=Date.now();
+    if(asset.inR2&&!videoSrc&&playback.current.loadedAt&&now-playback.current.loadedAt>240000&&now-playback.current.retriedAt>240000){playback.current.retriedAt=now;reloadPlayback(playing);return;}
+
+    setVideoError('This video cannot be played. Check its storage connection or try an H.264 MP4 / WebM.');setReady(false);setPlaying(false);scrub.current.final=null;setScrubTime(null);
+    try{const status=await api(`${base}/playback-status`);if(status.message)setVideoError(status.message);}catch(e){if(asset.inR2)setVideoError(e.message);}
+  }
+  function retryPlayback(){reloadPlayback();}
   function clear() { setDrawingTime(null);setAnnotations([]); setHotspot(null); setDraftTime(null); setSelectedId(null); setPinEditor(null); }
   return <div className="review-layout"><div className="media-column"><section className="player" aria-label="Video review player"><div className="video-stage" ref={stage}>
-    <video ref={video} src={videoSrc || `${base}/video`} poster={posterSrc || `${base}/poster`} playsInline preload="metadata" onLoadedMetadata={e => { setDuration(e.currentTarget.duration); setReady(true); }} onTimeUpdate={e => {if(!scrub.current.active&&scrub.current.final===null)setTime(e.currentTarget.currentTime);}} onSeeked={finishSeek} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={playbackFailed} aria-label={asset.name}/>
+    <video ref={video} src={videoSrc || `${base}/video`} poster={posterSrc || `${base}/poster`} playsInline preload="metadata" onLoadedMetadata={metadataLoaded} onTimeUpdate={e => {if(!scrub.current.active&&scrub.current.final===null)setTime(e.currentTarget.currentTime);}} onSeeked={finishSeek} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={playbackFailed} aria-label={asset.name}/>
     <div ref={overlay} className={`video-overlay ${tool ? `tool-${tool}` : ''}`} style={mediaBox} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp}>
       <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">{shownDrawing.map((s, i) => s.points.length === 1 ? <circle key={i} cx={s.points[0].x * 1000} cy={s.points[0].y * 1000} r="2" fill={s.color}/> : <polyline key={i} points={s.points.map(p => `${p.x * 1000},${p.y * 1000}`).join(' ')} fill="none" stroke={s.color} strokeWidth="3" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round"/>)}</svg>
       {visibleComments.map(c => c.hotspot && near(c.time) && <button key={c.id} className={`hotspot ${selectedId === c.id ? 'active' : ''}`} style={{ left: `${c.hotspot.x * 100}%`, top: `${c.hotspot.y * 100}%` }} title={c.body} aria-label={`Open hotspot comment ${comments.indexOf(c) + 1}`} onClick={() => {selectComment(c);setPinEditor(c.id);}}>{comments.indexOf(c) + 1}</button>)}
