@@ -75,6 +75,32 @@ test('Persistent video review workflow and guest access boundaries',async t=>{
       const rows=await (await request(`/api/assets/${uploaded.id}/comments`)).json();assert.equal(rows.length,2);assert.deepEqual(rows.find(c=>c.id===comment.id).annotations,comment.annotations);assert.equal(rows.find(c=>c.id===comment.id).resolved,true);
       assert.equal((await request(`/api/assets/${uploaded.id}/video`)).status,200);
     });
+    await t.test('deleting one video revokes its links and feedback, cleans local files, and preserves its project and sibling',async()=>{
+      const before=readdirSync(path.join(dir,'uploads')).length;
+      const form=new FormData();form.append('video',new Blob([readFileSync(path.join(root,'public/demo.mp4'))],{type:'video/mp4'}),'Disposable.mp4');
+      const disposable=await (await request('/api/projects/launch/assets','POST',form)).json();
+      const feedback=await (await request(`/api/assets/${disposable.id}/comments`,'POST',{author:'A',body:'Delete only me',time:1})).json();
+      const link=await (await request(`/api/assets/${disposable.id}/share`,'POST')).json();
+      assert.equal((await request(`/api/assets/${disposable.id}`,'DELETE',null,false)).status,401);
+      assert.equal((await request(`/api/reviews/${link.token}`,'DELETE',null,false)).status,404);
+      assert.equal((await request(`/api/assets/${disposable.id}`,'DELETE')).status,204);
+      assert.equal(readdirSync(path.join(dir,'uploads')).length,before);
+      assert.equal((await request(`/api/assets/${disposable.id}`)).status,404);
+      assert.equal((await request(`/api/assets/${disposable.id}/comments/${feedback.id}`,'PATCH',{resolved:true})).status,404);
+      assert.equal((await request(`/api/reviews/${link.token}`,'GET',null,false)).status,404);
+      assert.equal((await request(`/api/assets/${uploaded.id}`)).status,200);
+      assert.equal((await (await request(`/api/assets/${uploaded.id}/comments`)).json()).length,2);
+      assert.equal((await request(`/api/reviews/${invitation.token}`,'GET',null,false)).status,200);
+      const emptyProject=await (await request('/api/projects','POST',{name:'Keep empty project'})).json();
+      const last=new FormData();last.append('video',new Blob([readFileSync(path.join(root,'public/demo.mp4'))]),'Last.mp4');
+      const lastVideo=await (await request(`/api/projects/${emptyProject.id}/assets`,'POST',last)).json();
+      assert.equal((await request(`/api/assets/${lastVideo.id}`,'DELETE')).status,204);
+      await server.stop();server=await startServer(dir);
+      assert.equal((await request(`/api/assets/${disposable.id}`)).status,404);
+      assert.deepEqual(await (await request(`/api/projects/${emptyProject.id}/assets`)).json(),[]);
+      assert.ok((await (await request('/api/projects')).json()).some(p=>p.id===emptyProject.id&&p.asset_count===0));
+      await request(`/api/projects/${emptyProject.id}`,'DELETE');
+    });
     await t.test('deleting a project removes its files and links, leaves other projects intact, and stays deleted after restart',async()=>{
       assert.equal((await request('/api/projects/launch','DELETE',null,false)).status,401);
       assert.equal((await request('/api/projects/launch','DELETE')).status,204);

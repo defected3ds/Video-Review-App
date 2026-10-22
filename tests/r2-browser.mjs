@@ -41,7 +41,7 @@ try{
   await page.route('**/api/reviews',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{...asset,inB2:true,inR2:false,reviewCopy:false,size:119000000,project_name:'Autumn campaign'}])}));
   await page.route('**/api/assets/demo/migrate-r2',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({moved:true,bytesSaved:110000000,asset:{...asset,inR2:true,inB2:false,reviewCopy:true,size:9000000}})}));
   await page.goto(server.base+'/admin');await page.getByRole('heading',{name:'Cloudflare R2 setup',exact:true}).waitFor();
-  await page.getByRole('button',{name:/Move Welcome.*to Cloudflare R2/}).click();await page.getByText('Video moved to Cloudflare R2. Comments and links are preserved.',{exact:true}).waitFor();await page.getByText('Review copy ready',{exact:true}).waitFor();
+  await page.getByRole('button',{name:/Move Welcome.*to Cloudflare R2/}).click();await page.getByText('Video moved to Cloudflare R2. Comments and links are preserved.',{exact:true}).waitFor();await page.getByText('Existing review copy',{exact:true}).waitFor();
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   assert.deepEqual(errors,[]);console.log('PASS: authenticated R2 setup and migration controls; no browser exceptions');
 }finally{await browser.close();await new Promise(resolve=>cloudServer.close(resolve));await server.stop();rmSync(dir,{recursive:true,force:true});}

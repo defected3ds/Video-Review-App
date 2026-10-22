@@ -81,7 +81,7 @@ test('R2 signed uploads, direct owner/guest playback, quotas and legacy migratio
       assert.equal((await request('/api/storage/status','GET',null,false)).status,401);
       const setup=await request('/api/setup','POST',{name:'Owner',password:'review'});assert.equal(setup.status,201);cookie=setup.headers.get('set-cookie').split(';')[0];
       const status=await (await request('/api/storage/status')).json();assert.equal(status.provider,'r2');assert.equal(status.connected,true);assert.equal(status.maxBytes,r2MaxBytes);assert.ok(!JSON.stringify(status).includes(secret));
-      const result=await upload('launch');assert.equal(result.status,201);asset=await result.json();assert.equal(asset.inR2,true);assert.equal(asset.inB2,false);assert.equal(asset.reviewCopy,true);assert.equal(asset.filename,undefined);assert.equal(objects.size,1);assert.equal(b2Reads,0);assert.deepEqual(readdirSync(path.join(dir,'uploads')),[]);
+      const result=await upload('launch');assert.equal(result.status,201);asset=await result.json();assert.equal(asset.inR2,true);assert.equal(asset.inB2,false);assert.equal(asset.reviewCopy,false);assert.equal(asset.size,video.length);assert.deepEqual([...objects.values()][0].bytes,video);assert.equal(asset.filename,undefined);assert.equal(objects.size,1);assert.equal(b2Reads,0);assert.deepEqual(readdirSync(path.join(dir,'uploads')),[]);
     });
     await t.test('authenticated redirects deliver private byte ranges directly from storage',async()=>{
       assert.equal((await request(`/api/assets/${asset.id}/video`,'GET',null,false)).status,401);
@@ -106,16 +106,25 @@ test('R2 signed uploads, direct owner/guest playback, quotas and legacy migratio
       await request('/api/assets/demo','PATCH',{status:'Approved'});
       assert.equal((await request('/api/assets/demo/migrate-r2','POST',null,false)).status,401);assert.equal((await request(`/api/reviews/${legacyShare.token}/migrate-r2`,'POST',null,false)).status,404);
       const count=objects.size;b2Capped=true;assert.equal((await request('/api/assets/demo/migrate-r2','POST')).status,503);assert.equal(objects.size,count);assert.equal((await (await request('/api/assets/demo')).json()).inB2,true);
-      b2Capped=false;const moved=await request('/api/assets/demo/migrate-r2','POST');assert.equal(moved.status,200);const value=await moved.json();assert.equal(value.asset.id,'demo');assert.equal(value.asset.status,'Approved');assert.equal(value.asset.inR2,true);assert.equal(value.asset.fps,25);assert.equal(value.asset.duration,8);assert.equal(b2Reads,1);
+      b2Capped=false;const moved=await request('/api/assets/demo/migrate-r2','POST');assert.equal(moved.status,200);const value=await moved.json();assert.equal(value.asset.id,'demo');assert.equal(value.asset.status,'Approved');assert.equal(value.asset.inR2,true);assert.equal(value.asset.fps,25);assert.equal(value.asset.duration,8);assert.equal(value.bytesSaved,0);assert.equal(value.asset.reviewCopy,false);assert.deepEqual([...objects.values()].at(-1).bytes,video);assert.equal(b2Reads,1);
       const shared=await (await request(`/api/reviews/${legacyShare.token}`,'GET',null,false)).json();assert.equal(shared.asset.id,'demo');assert.equal(shared.asset.inR2,true);
       const comments=await (await request(`/api/reviews/${legacyShare.token}/comments`,'GET',null,false)).json();assert.ok(comments.some(c=>c.body==='Keep this pin'&&c.hotspot.x===.4&&c.annotations.length));
       const ready=await request(`/api/reviews/${legacyShare.token}/video`,'GET',null,false,{redirect:'manual'});assert.equal(ready.status,307);assert.equal((await fetch(ready.headers.get('location'))).status,200);
       assert.equal((await (await request('/api/assets/demo/migrate-r2','POST')).json()).alreadyMoved,true);assert.equal(b2Reads,1);assert.deepEqual(readdirSync(path.join(dir,'uploads')),[]);
     });
+    await t.test('migration preserves existing review-copy bytes and labels without another encode',async()=>{
+      const db=new DatabaseSync(path.join(dir,'review.sqlite'));
+      db.prepare('INSERT INTO assets (id,project_id,name,filename,size,duration,fps,poster) VALUES (?,?,?,?,?,?,?,?)').run('existing-review','launch','Already compact.mp4','b2:legacy-review:'+Buffer.from('pvr/launch/legacy-review.mp4').toString('base64url'),video.length,8,25,'demo');db.close();
+      const response=await request('/api/assets/existing-review/migrate-r2','POST');assert.equal(response.status,200);const moved=await response.json();
+      assert.equal(moved.bytesSaved,0);assert.equal(moved.asset.reviewCopy,true);assert.equal(moved.asset.size,video.length);assert.deepEqual([...objects.values()].at(-1).bytes,video);
+    });
     await t.test('restart retains playback; revocation stops new playback links; originals survive project deletion',async()=>{
       await server.stop();server=await startServer(dir,env);assert.equal((await request(`/api/reviews/${invite.token}/video`,'GET',null,false,{redirect:'manual'})).status,307);
       await request(`/api/assets/${asset.id}/share`,'DELETE');assert.equal((await request(`/api/reviews/${invite.token}/video`,'GET',null,false,{redirect:'manual'})).status,404);
-      const count=objects.size;await request('/api/projects/launch','DELETE');assert.equal(objects.size,count);
+      const count=objects.size;assert.equal((await request(`/api/assets/${asset.id}`,'DELETE')).status,204);assert.equal(objects.size,count);
+      assert.equal((await request(`/api/assets/${asset.id}/video`,'GET',null,true,{redirect:'manual'})).status,404);
+      assert.equal((await request('/api/assets/demo')).status,200);assert.ok((await (await request('/api/projects')).json()).some(p=>p.id==='launch'));
+      await request('/api/projects/launch','DELETE');assert.equal(objects.size,count);
     });
     await t.test('partial R2 settings fail clearly instead of sending new files to Backblaze',async()=>{
       await server.stop();server=await startServer(dir,{...env,R2_SECRET_ACCESS_KEY:''});const project=await (await request('/api/projects','POST',{name:'Partial settings'})).json();

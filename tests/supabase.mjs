@@ -70,6 +70,15 @@ try {
     await server.stop();rmSync(dir,{recursive:true,force:true});server=await startServer(dir,env);
     assert.equal((await (await request('/api/assets/test-video')).json()).status,'Approved');
     const comments=await (await request('/api/assets/test-video/comments')).json();assert.deepEqual(comments[0].hotspot,{x:.4,y:.5});assert.equal(comments[0].resolved,true);
+    await database.createAsset({id:'delete-video',project_id:project.id,name:'Disposable.mp4',filename:null,poster:'demo',size:0,duration:8,fps:25});
+    const deleteLink=await (await request('/api/assets/delete-video/share','POST')).json();
+    await request('/api/assets/delete-video/comments','POST',{author:'A',body:'Delete this review only',time:1});
+    assert.equal((await request('/api/assets/delete-video','DELETE',null,false)).status,401);
+    assert.equal((await request('/api/assets/delete-video','DELETE')).status,204);
+    assert.equal(await database.asset('delete-video'),undefined);assert.deepEqual(await database.comments('delete-video'),[]);
+    assert.equal((await request(`/api/reviews/${deleteLink.token}`,'GET',null,false)).status,404);
+    assert.equal((await request(`/api/reviews/${invite.token}`,'GET',null,false)).status,200);
+    assert.equal((await database.projects())[0].asset_count,1);assert.equal((await database.comments('test-video')).length,1);
     assert.equal((await request('/api/projects/'+project.id,'DELETE',null,false)).status,401);
     assert.equal((await request('/api/projects/'+project.id,'DELETE')).status,204);
     assert.equal((await request(`/api/reviews/${invite.token}`,'GET',null,false)).status,404);

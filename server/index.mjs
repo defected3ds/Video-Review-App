@@ -167,14 +167,11 @@ app.post('/api/projects/:id/assets',async(req,res,next)=>{
     let filename=req.file.filename,posterRef=poster;
     const connected=!videoStorage.configured&&(await drive.status()).connected;
     if(videoStorage.configured){
-      const reviewPath=req.file.path+'.review.mp4',fps=Number.isFinite(n/d)&&n/d>0?n/d:25;
-      try{
-        const copy=await withVideoWork(()=>reviewCopy(req.file.path,reviewPath,{duration:Number(metadata.format.duration),fps,extension:path.extname(req.file.originalname).toLowerCase()}));
-        filename=await videoStorage.upload(copy.path,`pvr/${req.params.id}/${id}-review${copy.extension}`,copy.extension==='.webm'?'video/webm':'video/mp4',copy.size);
-        posterRef=`${inlinePosterPrefix}${readFileSync(path.join(uploads,poster)).toString('base64')}`;
-        try{await store.createAsset({id,project_id:req.params.id,name:path.basename(req.file.originalname,path.extname(req.file.originalname)).slice(0,190)+copy.extension,filename,size:copy.size,duration:Number(metadata.format.duration),fps,poster:posterRef});}
-        catch(error){await videoStorage.remove(filename).catch(()=>{});throw error;}
-      }finally{if(existsSync(reviewPath))unlinkSync(reviewPath);}
+      const extension=path.extname(req.file.originalname).toLowerCase();
+      filename=await videoStorage.upload(req.file.path,`pvr/${req.params.id}/${id}${extension}`,extension==='.webm'?'video/webm':'video/mp4',req.file.size);
+      posterRef=`${inlinePosterPrefix}${readFileSync(path.join(uploads,poster)).toString('base64')}`;
+      try{await store.createAsset({id,project_id:req.params.id,name:path.basename(req.file.originalname).slice(0,200),filename,size:req.file.size,duration:Number(metadata.format.duration),fps:Number.isFinite(n/d)&&n/d>0?n/d:25,poster:posterRef});}
+      catch(error){await videoStorage.remove(filename).catch(()=>{});throw error;}
       for(const file of [req.file.path,path.join(uploads,poster)])if(existsSync(file))unlinkSync(file);
     }else if(connected){
       const uploaded=await drive.upload(req.file.path,path.basename(req.file.originalname).slice(0,200),path.extname(req.file.originalname).toLowerCase()==='.webm'?'video/webm':'video/mp4',req.file.size);
@@ -224,6 +221,18 @@ assetRouter.use('/:assetId',async(req,res,next)=>{
   if(!req.asset)return fail(res,404,'Video not found.');next();
 });
 assetRouter.get('/:assetId',async(req,res)=>res.json(publicAsset(req.asset)));
+assetRouter.delete('/:assetId',async(req,res)=>{
+  await store.deleteAsset(req.asset.id);
+  // Match project deletion: retain cloud originals, which may be used elsewhere.
+  // Local files are disposable, but a failed cleanup must not report a failed deletion.
+  const local=req.asset.filename&&!sourceStorage(req.asset.filename)&&!req.asset.filename.startsWith(drivePrefix);
+  for(const filename of local?[req.asset.filename,req.asset.poster]:[]) {
+    if(filename&&!filename.startsWith(inlinePosterPrefix)&&existsSync(path.join(uploads,filename))) {
+      try{unlinkSync(path.join(uploads,filename));}catch{console.warn('Unable to clean up a deleted video file.');}
+    }
+  }
+  res.status(204).end();
+});
 const convertVideo=(moving=false)=>async(req,res)=>withVideoWork(async()=>{
   const asset=await store.asset(req.asset.id);
   if(!asset)return fail(res,404,'Video not found.');
@@ -237,13 +246,13 @@ const convertVideo=(moving=false)=>async(req,res)=>withVideoWork(async()=>{
   try{
     // One source download is needed. A capped account fails here before any changes.
     const controller=AbortSignal.timeout(180000),response=await origin.media(asset.filename,{signal:controller});
-    if(response.status!==200||!response.body){await response.body?.cancel();return fail(res,503,'Unable to read the original video for compression.');}
+    if(response.status!==200||!response.body){await response.body?.cancel();return fail(res,503,'Unable to read the original video from storage.');}
     let received=0;
     const limit=new Transform({transform(chunk,encoding,done){received+=chunk.length;if(received>maxUploadMB*1024*1024)done(Object.assign(new Error('Video exceeds the processing size limit.'),{status:413,publicMessage:'Video exceeds the processing size limit.'}));else done(null,chunk);}});
     await pipeline(Readable.fromWeb(response.body),limit,createWriteStream(source),{signal:controller});
     if(asset.size&&statSync(source).size!==asset.size)return fail(res,503,'The source download was incomplete. Your existing video is unchanged.');
-    const copy=isReviewCopy(asset.filename)?{path:source,size:statSync(source).size,extension:path.extname(asset.name).toLowerCase()}:await reviewCopy(source,output,{duration:asset.duration,fps:asset.fps,extension:path.extname(asset.name).toLowerCase()});
-    uploaded=await destination.upload(copy.path,`pvr/${asset.project_id}/${asset.id}-${randomUUID()}-review${copy.extension}`,copy.extension==='.webm'?'video/webm':'video/mp4',copy.size);
+    const copy=moving||isReviewCopy(asset.filename)?{path:source,size:statSync(source).size,extension:path.extname(asset.name).toLowerCase()}:await reviewCopy(source,output,{duration:asset.duration,fps:asset.fps,extension:path.extname(asset.name).toLowerCase()});
+    uploaded=await destination.upload(copy.path,`pvr/${asset.project_id}/${asset.id}-${randomUUID()}${moving&&!isReviewCopy(asset.filename)?'':'-review'}${copy.extension}`,copy.extension==='.webm'?'video/webm':'video/mp4',copy.size);
     const replacement={filename:uploaded,size:copy.size,name:path.basename(asset.name,path.extname(asset.name)).slice(0,190)+copy.extension};
     if(!await store.replaceVideo(asset.id,asset.filename,replacement))throw Object.assign(new Error('The video changed during processing. Refresh and try again.'),{status:409});
     const saved=Math.max(0,asset.size-copy.size);uploaded=null;

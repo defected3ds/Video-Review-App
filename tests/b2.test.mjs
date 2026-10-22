@@ -74,7 +74,7 @@ test('Backblaze uploads, free limits, and private owner/guest playback', async t
       assert.ok(!JSON.stringify(status).includes('test-key')); assert.ok(!JSON.stringify(status).includes('token'));
     });
     await t.test('validated video bytes and checksum reach storage; temporary files are removed', async () => {
-      const response = await upload('launch'); assert.equal(response.status, 201); asset = await response.json();storedVideo=[...files.values()].at(-1).bytes;assert.equal(asset.reviewCopy,true);assert.equal(asset.size,storedVideo.length);
+      const response = await upload('launch'); assert.equal(response.status, 201); asset = await response.json();storedVideo=[...files.values()].at(-1).bytes;assert.equal(asset.reviewCopy,false);assert.deepEqual(storedVideo,video);assert.equal(asset.size,storedVideo.length);
       assert.equal(asset.inB2, true); assert.equal(asset.inDrive, false); assert.equal(asset.filename, undefined); assert.equal(asset.duration, 8); assert.equal(asset.fps, 25);
       assert.deepEqual(readdirSync(path.join(dir, 'uploads')), []);
       const poster = await request(`/api/assets/${asset.id}/poster`); assert.equal(poster.status, 200); assert.match(poster.headers.get('content-type'), /image\/jpeg/);

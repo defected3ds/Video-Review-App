@@ -59,6 +59,13 @@ if (!db.prepare('SELECT id FROM projects LIMIT 1').get() && !db.prepare('SELECT 
     reviewAssets: () => all('SELECT a.*,p.name AS project_name,(SELECT count(*) FROM comments WHERE asset_id=a.id AND resolved=0) AS comment_count FROM assets a JOIN projects p ON p.id=a.project_id ORDER BY a.created_at DESC,a.rowid DESC'),
     asset: id => get('SELECT * FROM assets WHERE id=?',id),
     createAsset: value => run('INSERT INTO assets (id,project_id,name,filename,size,duration,fps,poster) VALUES (?,?,?,?,?,?,?,?)',value.id,value.project_id,value.name,value.filename,value.size,value.duration,value.fps,value.poster),
+    deleteAsset: id => {
+      db.exec('BEGIN');
+      try {
+        run('DELETE FROM comments WHERE asset_id=?',id);run('DELETE FROM reviews WHERE asset_id=?',id);run('DELETE FROM assets WHERE id=?',id);
+        db.exec('COMMIT');
+      } catch(error) {db.exec('ROLLBACK');throw error;}
+    },
     replaceVideo: (id,previous,value) => run('UPDATE assets SET filename=?,size=?,name=? WHERE id=? AND filename=?',value.filename,value.size,value.name,id,previous).changes,
     status: (id,status) => run('UPDATE assets SET status=? WHERE id=?',status,id),
     createReview: (token,id,expires) => run('INSERT INTO reviews (token,asset_id,expires_at) VALUES (?,?,?)',token,id,expires),
@@ -133,6 +140,7 @@ export function supabaseDatabase({url, key, fetcher = fetch, allowLocal = false}
     reviewAssets:async()=>(await request('assets',{filters:{'pvr_comments.resolved':'eq.0'},select:'*,project:pvr_projects(name),pvr_comments(count)',order:'created_at.desc,id.asc'})).map(({project,pvr_comments,...a})=>({...a,project_name:project?.name||'Project',comment_count:pvr_comments[0]?.count||0})),
     asset:id=>first('assets',{id:`eq.${id}`}),
     createAsset:value=>insert('assets',value),
+    deleteAsset:id=>remove('assets',{id:`eq.${id}`}),
     replaceVideo:async(id,previous,value)=>(await request('assets',{method:'PATCH',filters:{id:`eq.${id}`,filename:`eq.${previous}`},body:value})).length,
     status:(id,status)=>request('assets',{method:'PATCH',filters:{id:`eq.${id}`},body:{status}}),
     createReview:(token,asset_id,expires_at)=>insert('reviews',{token,asset_id,expires_at}),

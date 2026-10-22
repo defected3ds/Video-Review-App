@@ -25,6 +25,8 @@ try {
  await page.getByRole('button',{name:'Pencil',exact:true}).click();
  await page.mouse.move(rect.x+rect.width*.3,rect.y+rect.height*.3);await page.mouse.down();await page.mouse.move(rect.x+rect.width*.5,rect.y+rect.height*.5,{steps:10});await page.mouse.up();
  assert.equal(await page.getByLabel('Source frame rate').isDisabled(),true);
+ await page.locator('.drawing-editor').getByRole('button',{name:'Accept drawing',exact:true}).click();
+ await page.getByRole('button',{name:'Drawing',exact:true}).waitFor();
  await page.getByLabel('Comment',{exact:true}).fill('Offline hotspot and pencil feedback');
  await page.getByRole('button',{name:'Send comment'}).click();
  await page.getByRole('button',{name:'Offline hotspot and pencil feedback',exact:true}).click();
