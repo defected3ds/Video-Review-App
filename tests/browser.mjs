@@ -124,7 +124,7 @@ try {
   await page.getByRole('button',{name:'Please adjust this highlighted detail.',exact:true}).click();
   await page.locator('.hotspot.active').waitFor();
   assert.ok(await page.locator('.video-overlay polyline').count());
-  const groupedMarker=page.locator('.timeline-markers button').filter({has:page.locator('span').getByText('2',{exact:true})});
+  const groupedMarker=page.locator('.timeline-markers button[data-feedback-count="2"]');
   assert.equal(await groupedMarker.count(),1);
   const markerAlignment=await groupedMarker.evaluate(button=>{
     const circle=getComputedStyle(button,'::after'),stem=getComputedStyle(button,'::before');
@@ -138,8 +138,10 @@ try {
   assert.ok(Math.abs(markerAlignment.stemX-markerAlignment.circleX)<.5,'Timeline stem must align with the bordered circle’s center');
   await groupedMarker.click();
   await page.locator('.comment.selected .drawing-preview').waitFor();
+  assert.equal(await groupedMarker.locator('span').innerText(),'1');
   await groupedMarker.click();
   await page.locator('.comment.selected .comment-body').filter({hasText:'Please adjust this highlighted detail.'}).waitFor();
+  assert.equal(await groupedMarker.locator('span').innerText(),'2');
   await page.getByRole('button',{name:'Fullscreen video'}).click();
   await page.waitForFunction(()=>document.fullscreenElement?.classList.contains('player'));
   await page.getByRole('button',{name:'Exit fullscreen',exact:true}).click();
