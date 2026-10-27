@@ -28,6 +28,7 @@ const videoStorage=r2Storage.requested?r2Storage:b2Storage;
 const sourceStorage=filename=>filename?.startsWith(r2Prefix)?r2Storage:filename?.startsWith(b2Prefix)?b2Storage:null;
 const maxUploadMB=250;
 const sessionLifetime=60*60*1000;
+const passwordRequired=process.env.WORKSPACE_PASSWORD_REQUIRED!=='false';
 // Shorten pre-existing seven-day sessions once, without extending them on requests/restarts.
 await store.capSessions(Date.now()+sessionLifetime);
 let commentEditKey=process.env.SUPABASE_SECRET_KEY;
@@ -61,7 +62,8 @@ app.use(async(req,res,next) => {
   req.profile = session?.profile_id?await store.profile(session.profile_id):null;
   next();
 });
-const requireOwner = (req,res,next) => req.owner ? next() : fail(res,401,'Sign in to access the team workspace.');
+const requireOwner = (req,res,next) => req.owner ? next() : fail(res,401,'Sign in to access workspace settings.');
+const requireWorkspace=(req,res,next)=>{if(!passwordRequired||req.owner){req.workspaceAccess=true;return next();}return fail(res,401,'Sign in to access the team workspace.');};
 async function createSession(req,res,profileId=req.profile?.id||null) {
   const token = randomBytes(32).toString('hex');
   await store.clearSessions(Date.now());
@@ -78,7 +80,7 @@ async function findOrCreateProfile(name){
   if(!profile){const value={id:randomUUID(),nickname:name,nickname_key:key};try{await store.createProfile(value);}catch(error){if(error.status!==409)throw error;}profile=await store.profileByKey(key);}
   await store.touchProfile(profile.id,new Date().toISOString());return profile;
 }
-app.get('/api/session',async(req,res)=>{const owner=await store.owner();res.json({maxUploadMB,profilesEnabled:await profilesReady(),authenticated:req.owner,expiresAt:req.sessionExpiresAt,serverTime:Date.now(),setupRequired:!owner,name:req.owner?(req.profile?.nickname||owner?.name):null,profileId:req.owner?req.profile?.id||null:null});});
+app.get('/api/session',async(req,res)=>{const owner=await store.owner(),publicAccess=!passwordRequired&&req.query.admin!=='1';res.json({maxUploadMB,profilesEnabled:await profilesReady(),authenticated:req.owner||publicAccess,ownerAuthenticated:req.owner,publicAccess,passwordRequired,expiresAt:publicAccess?null:req.sessionExpiresAt,serverTime:Date.now(),setupRequired:!owner,name:req.owner?(req.profile?.nickname||owner?.name):null,profileId:req.owner?req.profile?.id||null:null});});
 app.get('/api/people',requireOwner,async(req,res)=>{if(!await profilesReady())return fail(res,503,profileSetupMessage);res.json(await store.profiles());});
 app.post('/api/setup',async(req,res)=>{
   if ((await store.owner())) return fail(res,409,'Workspace is already configured. Sign in instead.');
@@ -138,7 +140,7 @@ app.post('/api/logout',async(req,res)=>{
   if(cookie) await store.deleteSession(hash(cookie));
   res.clearCookie('pipelife_session',{path:'/'});res.status(204).end();
 });
-app.use('/api/projects',requireOwner);
+app.use('/api/projects',requireWorkspace);
 app.get('/api/projects',async(req,res)=>res.json(await store.projects()));
 app.post('/api/projects',async(req,res)=>{
   const name=typeof req.body?.name==='string'?req.body.name.trim():'';
@@ -196,8 +198,8 @@ app.post('/api/projects/:id/assets',async(req,res,next)=>{
     res.status(201).json({...publicAsset(await store.asset(id)),comment_count:0});
   }catch(error){for(const file of [req.file.path,path.join(uploads,poster)])if(existsSync(file))unlinkSync(file);next(error);}
 });
-app.get('/api/storage/status',requireOwner,async(req,res)=>res.json({...await videoStorage.status(),r2Requested:r2Storage.requested,r2Configured:r2Storage.configured,b2Configured:b2Storage.configured}));
-app.get('/api/reviews',requireOwner,async(req,res)=>res.json((await store.reviewAssets()).map(publicAsset)));
+app.get('/api/storage/status',requireWorkspace,async(req,res)=>res.json({...await videoStorage.status(),r2Requested:r2Storage.requested,r2Configured:r2Storage.configured,b2Configured:b2Storage.configured}));
+app.get('/api/reviews',requireWorkspace,async(req,res)=>res.json((await store.reviewAssets()).map(publicAsset)));
 // Drive authorization is owner-only. The callback uses a one-time, expiring state
 // plus PKCE; it does not rely on cookies being sent from Google's origin.
 app.get('/api/drive/status',requireOwner,async(req,res)=>res.json(await drive.status()));
@@ -208,7 +210,7 @@ app.get('/api/drive/callback',async(req,res)=>{
   try{await drive.complete(req.query.state,req.query.code);res.redirect(303,'/?drive=connected');}
   catch(error){console.error('Drive callback failed:',error.publicMessage||'authorization unavailable');res.redirect(303,'/?drive=error');}
 });
-app.post('/api/projects/:id/drive-import',async(req,res)=>{
+app.post('/api/projects/:id/drive-import',requireOwner,async(req,res)=>{
   if(!(await store.project(req.params.id)))return fail(res,404,'Project not found.');
   const file=await drive.metadata(req.body?.fileId),id=randomUUID();
   const filename=path.join(uploads,`import-${id}`),poster=path.join(uploads,`import-${id}.jpg`);
@@ -282,8 +284,8 @@ const convertVideo=(moving=false)=>async(req,res)=>withVideoWork(async()=>{
     for(const file of [source,output])if(existsSync(file))unlinkSync(file);
   }
 });
-assetRouter.post('/:assetId/optimize',convertVideo());
-assetRouter.post('/:assetId/migrate-r2',convertVideo(true));
+assetRouter.post('/:assetId/optimize',requireOwner,convertVideo());
+assetRouter.post('/:assetId/migrate-r2',requireOwner,convertVideo(true));
 assetRouter.post('/:assetId/share',async(req,res)=>{
   const token=randomBytes(24).toString('hex'),expiresAt=Date.now()+7*86400000;
   await store.createReview(hash(token),req.asset.id,expiresAt);
@@ -296,7 +298,7 @@ const changeStatus=async(req,res)=>{
 };
 const playbackStatus=(req,res)=>{const issue=req.asset.filename?.startsWith(b2Prefix)?b2Storage.playbackIssue(req.asset.filename):null;res.json({available:!issue,...issue});};
 const serveVideo=async(req,res)=>{
-  if(req.asset.filename?.startsWith(r2Prefix)){if(req.get('range')&&!/^bytes=\d*-\d*$/.test(req.get('range')))return res.status(416).end();const remaining=Math.floor(((req.owner?req.sessionExpiresAt:req.reviewSession?.expires_at)-Date.now())/1000);if(remaining<1)return fail(res,401,'Your session has expired. Enter the shared password again.');const playback=await r2Storage.playback(req.asset.filename,Math.min(300,remaining));return res.redirect(307,playback.url);}
+  if(req.asset.filename?.startsWith(r2Prefix)){if(req.get('range')&&!/^bytes=\d*-\d*$/.test(req.get('range')))return res.status(416).end();const remaining=passwordRequired?Math.floor(((req.owner?req.sessionExpiresAt:req.reviewSession?.expires_at)-Date.now())/1000):300;if(remaining<1)return fail(res,401,'Your session has expired. Enter the shared password again.');const playback=await r2Storage.playback(req.asset.filename,Math.min(300,remaining));return res.redirect(307,playback.url);}
   if(req.asset.filename?.startsWith(b2Prefix))return proxyMedia(signal=>b2Storage.media(req.asset.filename,{range:req.get('range'),signal}),req,res,req.asset.name.toLowerCase().endsWith('.webm')?'video/webm':'video/mp4');
   if(req.asset.filename?.startsWith(drivePrefix))return proxyMedia(signal=>drive.media(req.asset.filename.slice(drivePrefix.length),{range:req.get('range'),signal}),req,res,req.asset.name.toLowerCase().endsWith('.webm')?'video/webm':'video/mp4');
   const filename=req.asset.filename?path.join(uploads,req.asset.filename):path.join(root,'public','demo.mp4');
@@ -328,7 +330,7 @@ const editComment=async(req,res)=>{
   const comment=await store.comment(req.params.commentId);
   if(!comment||comment.asset_id!==req.asset.id)return fail(res,404,'Comment not found.');
   const token=req.body?.editToken;
-  if(!req.owner&&(typeof token!=='string'||!/^[a-f0-9]{64}$/.test(token)||!timingSafeEqual(Buffer.from(token,'hex'),Buffer.from(editTokenFor(comment.id),'hex'))))return fail(res,403,'You can edit feedback created in this browser.');
+  if(!req.owner&&!req.workspaceAccess&&(typeof token!=='string'||!/^[a-f0-9]{64}$/.test(token)||!timingSafeEqual(Buffer.from(token,'hex'),Buffer.from(editTokenFor(comment.id),'hex'))))return fail(res,403,'You can edit feedback created in this browser.');
   const body=req.body?.body,annotations=req.body?.annotations??JSON.parse(comment.annotations),hotspot=req.body?.hotspot===undefined?(comment.hotspot?JSON.parse(comment.hotspot):null):req.body.hotspot;
   if(typeof body!=='string'||!body.trim()||body.length>4000)return fail(res,400,'Enter feedback of 1–4000 characters.');
   if(!Array.isArray(annotations)||annotations.length>100||!annotations.every(s=>s&&/^#[0-9a-f]{6}$/i.test(s.color)&&Array.isArray(s.points)&&s.points.length>0&&s.points.length<=1500&&s.points.every(validPoint))||JSON.stringify(annotations).length>100000||hotspot!==null&&!validPoint(hotspot))return fail(res,400,'Drawing or hotspot is invalid or too large.');
@@ -341,7 +343,7 @@ assetRouter.patch('/:assetId/comments/:commentId',async(req,res)=>{
   const result=await store.resolve(req.asset.id,req.params.commentId,req.body.resolved);
   if(!result)return fail(res,404,'Comment not found.');res.json(serializeComment(await store.comment(req.params.commentId)));
 });
-app.use('/api/assets',requireOwner,assetRouter);
+app.use('/api/assets',requireWorkspace,assetRouter);
 const guest=express.Router({mergeParams:true});
 const reviewCookiePath=req=>`/api/reviews/${encodeURIComponent(req.params.token)}`;
 const reviewSessionKey=(req,token)=>`review:${hash(req.params.token)}:${hash(token)}`;
@@ -354,7 +356,7 @@ guest.use(async(req,res,next)=>{
   req.reviewSession=token?await store.session(reviewSessionKey(req,token),Date.now()):null;
   next();
 });
-guest.get('/session',(req,res)=>res.json({canManageFeedback:req.owner,authenticated:Boolean(req.owner||req.reviewSession),setupRequired:false,expiresAt:req.owner?req.sessionExpiresAt:req.reviewSession?.expires_at||null,serverTime:Date.now(),maxUploadMB}));
+guest.get('/session',(req,res)=>res.json({canManageFeedback:req.owner,publicAccess:!passwordRequired,passwordRequired,authenticated:Boolean(!passwordRequired||req.owner||req.reviewSession),setupRequired:false,expiresAt:!passwordRequired?null:req.owner?req.sessionExpiresAt:req.reviewSession?.expires_at||null,serverTime:Date.now(),maxUploadMB}));
 guest.post('/login',async(req,res)=>withCredentialLock(async()=>{
   const now=Date.now(),key=req.ip,previous=attempts.get(key),attempt=previous&&previous.reset>now?previous:{count:0,reset:now+15*60000};attempts.set(key,attempt);
   if(++attempt.count>10)return fail(res,429,'Too many attempts. Try again in 15 minutes.');
@@ -370,7 +372,7 @@ guest.post('/logout',async(req,res)=>{
   if(req.sessionHash)await store.deleteSession(req.sessionHash);
   res.clearCookie('pipelife_review_session',{path:reviewCookiePath(req)});res.clearCookie('pipelife_session',{path:'/'});res.status(204).end();
 });
-guest.use((req,res,next)=>req.owner||req.reviewSession?next():fail(res,401,'Enter the shared password to open this review.'));
+guest.use((req,res,next)=>!passwordRequired||req.owner||req.reviewSession?next():fail(res,401,'Enter the shared password to open this review.'));
 guest.get('/',async(req,res)=>res.json({asset:publicAsset(req.asset),project:await store.project(req.asset.project_id)}));
 guest.patch('/comments/:commentId',(req,res)=>req.body?.resolved===undefined?editComment(req,res):fail(res,404,'Endpoint not found.'));
 guest.get('/playback-status',playbackStatus);guest.get('/video',serveVideo);guest.get('/poster',servePoster);guest.get('/comments',listComments);guest.post('/comments',addComment);guest.patch('/status',changeStatus);
