@@ -1,0 +1,27 @@
+// Cloudflare deployment: Worker + Container (Docker image from ./Dockerfile).
+// Requires the Workers Paid plan. Database: Cloudflare D1. Videos: Cloudflare R2. See DEPLOYMENT.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pipelife-video-review",
+  "main": "cloudflare/worker.mjs",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  // Keep variables added in the Cloudflare dashboard when redeploying.
+  "keep_vars": true,
+  "vars": {
+    "MAX_UPLOAD_MB": "95",
+    "R2_BUCKET_NAME": "pipelife-videos"
+  },
+  "containers": [
+    {
+      "class_name": "ReviewApp",
+      "image": "./Dockerfile",
+      "instance_type": "standard-1",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "REVIEW_APP", "class_name": "ReviewApp" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ReviewApp"] }]
+}

@@ -3,7 +3,7 @@ import { reviewCopy, withVideoWork } from './review-copy.mjs';
 import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import multer from 'multer';
-import { localDatabase, supabaseDatabase } from './database.mjs';
+import { localDatabase, supabaseDatabase, d1Database } from './database.mjs';
 import { mkdirSync, existsSync, unlinkSync, readFileSync, createWriteStream, statSync } from 'node:fs';
 import { proxyMedia } from './media.mjs';
 import { GoogleDrive, drivePrefix, inlinePosterPrefix } from './drive.mjs';
@@ -15,18 +15,19 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-if(process.env.NODE_ENV==='production'&&!process.env.SUPABASE_URL)throw new Error('Production requires SUPABASE_URL and SUPABASE_SECRET_KEY for persistent review data.');
+if(process.env.NODE_ENV==='production'&&!process.env.SUPABASE_URL&&!process.env.D1_DATABASE_ID)throw new Error('Production requires a persistent database: set D1_DATABASE_ID and CLOUDFLARE_D1_TOKEN (Cloudflare D1), or SUPABASE_URL and SUPABASE_SECRET_KEY.');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const data = path.resolve(process.env.DATA_DIR || path.join(root, '.data'));
 const uploads = path.join(data, 'uploads');
 mkdirSync(uploads, { recursive: true });
-const store = process.env.SUPABASE_URL ? supabaseDatabase({url:process.env.SUPABASE_URL,key:process.env.SUPABASE_SECRET_KEY,allowLocal:process.env.SUPABASE_ALLOW_LOCAL_TEST==='1'}) : localDatabase(data);
+const store = process.env.D1_DATABASE_ID ? d1Database({accountId:process.env.CLOUDFLARE_ACCOUNT_ID||process.env.R2_ACCOUNT_ID,databaseId:process.env.D1_DATABASE_ID,token:process.env.CLOUDFLARE_D1_TOKEN,...(process.env.NODE_ENV==='test'&&process.env.D1_TEST_ENDPOINT?{apiBase:process.env.D1_TEST_ENDPOINT,allowLocal:true}:{})}) : process.env.SUPABASE_URL ? supabaseDatabase({url:process.env.SUPABASE_URL,key:process.env.SUPABASE_SECRET_KEY,allowLocal:process.env.SUPABASE_ALLOW_LOCAL_TEST==='1'}) : localDatabase(data);
 const drive=new GoogleDrive(store,{allowLocal:process.env.DRIVE_ALLOW_LOCAL_TEST==='1'});
 const b2Storage=new BackblazeStorage();
 const r2Storage=new R2Storage(process.env.NODE_ENV==='test'&&process.env.R2_TEST_ENDPOINT?{endpoint:process.env.R2_TEST_ENDPOINT,allowLocal:true}:{});
 const videoStorage=r2Storage.requested?r2Storage:b2Storage;
 const sourceStorage=filename=>filename?.startsWith(r2Prefix)?r2Storage:filename?.startsWith(b2Prefix)?b2Storage:null;
-const maxUploadMB=250;
+// Cloudflare's proxy rejects request bodies over 100 MB on Free/Pro plans, so the Cloudflare deployment sets MAX_UPLOAD_MB=95.
+const maxUploadMB=Math.min(250,Math.max(1,Number(process.env.MAX_UPLOAD_MB)||250));
 const sessionLifetime=60*60*1000;
 const passwordRequired=process.env.WORKSPACE_PASSWORD_REQUIRED!=='false';
 // Shorten pre-existing seven-day sessions once, without extending them on requests/restarts.
@@ -34,7 +35,8 @@ const passwordRequired=process.env.WORKSPACE_PASSWORD_REQUIRED!=='false';
 const capSessions=async()=>{try{await store.capSessions(Date.now()+sessionLifetime);return true;}catch(error){console.error('Startup session cap failed, will retry:',error.message);return false;}};
 if(!await capSessions()){const retry=setInterval(async()=>{if(await capSessions())clearInterval(retry);},60000);retry.unref();}
 let commentEditKey=process.env.SUPABASE_SECRET_KEY;
-if(!commentEditKey){await store.createConnectionOnce('comment-edit-key',randomBytes(32).toString('hex'));commentEditKey=(await store.connection('comment-edit-key')).payload;}
+// Loaded on first request rather than at startup, so an unreachable database cannot crash the server.
+const loadCommentEditKey=async()=>{if(!commentEditKey){await store.createConnectionOnce('comment-edit-key',randomBytes(32).toString('hex'));commentEditKey=(await store.connection('comment-edit-key')).payload;}};
 const cookieValue=(req,name)=>req.get('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith(name+'='))?.slice(name.length+1);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const isReviewCopy=filename=>{const provider=sourceStorage(filename);if(!provider)return false;const ref=provider.reference(filename);return /-review\.(mp4|webm)$/.test(typeof ref==='string'?ref:ref.fileName);};
@@ -55,6 +57,7 @@ app.use(async(req,res,next) => {
   next();
 });
 app.use(express.json({ limit:'128kb' }));
+app.use(async(req,res,next)=>{if(req.path.startsWith('/api'))await loadCommentEditKey();next();});
 app.use(async(req,res,next) => {
   const cookie = req.get('cookie')?.split(';').map(v=>v.trim()).find(v=>v.startsWith('pipelife_session='))?.slice(17);
   req.sessionHash = cookie ? hash(cookie) : null;
@@ -393,7 +396,7 @@ app.use((err,req,res,next)=>{
   console.error(err.message);
   if(err.publicMessage)return fail(res,err.status||500,err.publicMessage);
   if(err.status===409)return fail(res,409,'That record already exists. Refresh and try again.');
-  if(err.status===503)return fail(res,503,'The database is unavailable. Check the Supabase configuration and schema.');
+  if(err.status===503)return fail(res,503,'The database is unavailable. Check the Cloudflare D1 or Supabase configuration.');
   if(err.status===404)return fail(res,404,'The video source is unavailable. Check its storage permissions.');
   fail(res,500,'Something went wrong. Please try again.');
 });

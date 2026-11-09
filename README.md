@@ -1,6 +1,6 @@
 # Pipelife video review
 
-A video review application for teams and clients. It uses React/Vite and Express, with SQLite for local development or Supabase for persistent hosted metadata, and FFmpeg for video inspection and thumbnails.
+A video review application for teams and clients. It uses React/Vite and Express, with SQLite for local development, Cloudflare D1 (or legacy Supabase) for persistent hosted metadata, and FFmpeg for video inspection and thumbnails.
 
 ## Run locally
 
@@ -55,6 +55,10 @@ In local development, data is stored in ignored `.data/`: SQLite holds projects,
 | `HOST` | `127.0.0.1` | Listening interface. Use `0.0.0.0` only on a deliberately configured host. |
 | `PORT` | `3001` | API and production frontend port. |
 | `DATA_DIR` | `.data` inside the checkout | Absolute or relative path to the database and uploads. |
+| `D1_DATABASE_ID` | unset | Cloudflare D1 database ID; enables D1 metadata storage (takes precedence over Supabase). |
+| `CLOUDFLARE_ACCOUNT_ID` | `R2_ACCOUNT_ID` | Cloudflare account that owns the D1 database. |
+| `CLOUDFLARE_D1_TOKEN` | unset | Server-only API token with D1 Edit permission. |
+| `MAX_UPLOAD_MB` | `250` | Upload size limit; the Cloudflare deployment uses `95`. |
 | `SUPABASE_URL` | unset | Supabase project origin; enables external metadata storage. |
 | `SUPABASE_SECRET_KEY` | unset | Server-only Supabase secret or legacy service-role credential. |
 | `R2_ACCOUNT_ID` | unset | Cloudflare account ID; enables preferred R2 storage when R2 variables are entered. |
@@ -71,7 +75,7 @@ In local development, data is stored in ignored `.data/`: SQLite holds projects,
 | `APP_URL` | `RENDER_EXTERNAL_URL` | Public HTTPS origin for the OAuth callback. |
 | `TRUST_PROXY` | unset | Set to `1` only behind one trusted reverse proxy, so HTTPS sessions receive secure cookies. |
 
-First-run setup asks the owner for a display name and workspace password of at least 6 characters. Ordinary sign-in asks only for the shared password. Review links also require it, with scoped review cookies that do not grant workspace or admin access. Workspace and review sessions expire exactly one hour after sign-in; activity does not extend them. Both cookie lifetime and database authorization enforce this, and older seven-day session rows are shortened at startup without being extended on later restarts. The page locks and pauses video at expiry, retaining unfinished text/drawings in memory until password re-entry. A commenter name is requested when leaving feedback and remembered in browser local storage across sessions, separately from login. Change it via the commenter icon; past comments retain their original names. Names are self-reported, not verified identities. Passwords stay out of browser storage. Initial authentication uses a loading gate to prevent a workspace flash. Setup closes after the first owner is created. Render variables do not reset the password. Production requires Supabase and never silently falls back to local SQLite.
+First-run setup asks the owner for a display name and workspace password of at least 6 characters. Ordinary sign-in asks only for the shared password. Review links also require it, with scoped review cookies that do not grant workspace or admin access. Workspace and review sessions expire exactly one hour after sign-in; activity does not extend them. Both cookie lifetime and database authorization enforce this, and older seven-day session rows are shortened at startup without being extended on later restarts. The page locks and pauses video at expiry, retaining unfinished text/drawings in memory until password re-entry. A commenter name is requested when leaving feedback and remembered in browser local storage across sessions, separately from login. Change it via the commenter icon; past comments retain their original names. Names are self-reported, not verified identities. Passwords stay out of browser storage. Initial authentication uses a loading gate to prevent a workspace flash. Setup closes after the first owner is created. Render variables do not reset the password. Production requires Cloudflare D1 or Supabase and never silently falls back to local SQLite.
 
 ### Administration
 

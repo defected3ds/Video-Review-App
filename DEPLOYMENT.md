@@ -1,4 +1,46 @@
-# Free Render deployment and video storage
+# Deployment: Cloudflare (current) and Render (legacy)
+
+The app now runs fully on Cloudflare:
+
+| Part | Cloudflare product |
+| --- | --- |
+| Web app and video processing (Node + ffmpeg, from `Dockerfile`) | Workers + **Containers** (`wrangler.jsonc`, `cloudflare/worker.mjs`) |
+| Reviews, comments, sessions, share links | **D1** database (`D1_DATABASE_ID`) |
+| Video files | **R2** bucket `pipelife-videos` |
+
+Cloudflare Containers require the **Workers Paid plan (from $5/month plus usage)**. The owner chooses and pays for it; nothing here upgrades billing automatically.
+
+Uploads are limited to **95 MB** on Cloudflare (`MAX_UPLOAD_MB`), because Cloudflare rejects request bodies over 100 MB on Free and Pro plans.
+
+## Cloudflare setup
+
+1. **Plan:** in the Cloudflare dashboard open **Workers & Pages → Plans** and choose **Workers Paid**.
+2. **Database:** open **Storage & Databases → D1 SQL Database → Create**, name it `pipelife-review`, and copy its **Database ID**. The app creates its tables on first start; no SQL needs to be run.
+3. **Database token:** open **My Profile → API Tokens → Create Token → Create Custom Token**. Give it the permission **Account → D1 → Edit**, limited to this account. Copy the token (it is shown once).
+4. **Deploy** the Worker and container. Either:
+   - **From the dashboard:** **Workers & Pages → Create → Import a repository**, choose this repository and branch, leave the build command empty and set the deploy command to `npx wrangler@4 deploy`; or
+   - **From a computer with Docker Desktop running:** `npm ci`, `npx wrangler@4 login`, then `npm run deploy:cloudflare`.
+5. **Settings:** open the Worker **pipelife-video-review → Settings → Variables and Secrets** and add:
+
+   | Name | Type | Value |
+   | --- | --- | --- |
+   | `CLOUDFLARE_ACCOUNT_ID` | Text | 32-character account ID (R2 → Account Details) |
+   | `D1_DATABASE_ID` | Text | Database ID from step 2 |
+   | `CLOUDFLARE_D1_TOKEN` | Secret | Token from step 3 |
+   | `R2_ACCOUNT_ID` | Text | Same account ID |
+   | `R2_ACCESS_KEY_ID` | Secret | R2 token Access Key ID |
+   | `R2_SECRET_ACCESS_KEY` | Secret | R2 token Secret Access Key |
+
+   `R2_BUCKET_NAME` (`pipelife-videos`) and `MAX_UPLOAD_MB` (`95`) are already set in `wrangler.jsonc`. Do not add `SUPABASE_*` settings.
+6. Open `https://pipelife-video-review.<your-subdomain>.workers.dev`, create the workspace password (the D1 database starts empty), then open `/admin#storage` and choose **Check connection** to confirm R2.
+7. When the Cloudflare site works, **suspend the old Render service** (Render → pipelife-video-review → Settings → Suspend Web Service) so it stops sending failure emails.
+
+The container sleeps after 15 minutes without traffic; the first visit after that takes a few seconds while it starts. If the database cannot be reached, the server stays up and shows "The database is unavailable" instead of crashing.
+
+---
+
+## Legacy: Render + Supabase
+
 
 Primary application: https://pipelife-video-review.onrender.com
 
