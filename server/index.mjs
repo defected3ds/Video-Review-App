@@ -30,7 +30,9 @@ const maxUploadMB=250;
 const sessionLifetime=60*60*1000;
 const passwordRequired=process.env.WORKSPACE_PASSWORD_REQUIRED!=='false';
 // Shorten pre-existing seven-day sessions once, without extending them on requests/restarts.
-await store.capSessions(Date.now()+sessionLifetime);
+// A paused or unreachable database must not crash startup; retry in the background instead.
+const capSessions=async()=>{try{await store.capSessions(Date.now()+sessionLifetime);return true;}catch(error){console.error('Startup session cap failed, will retry:',error.message);return false;}};
+if(!await capSessions()){const retry=setInterval(async()=>{if(await capSessions())clearInterval(retry);},60000);retry.unref();}
 let commentEditKey=process.env.SUPABASE_SECRET_KEY;
 if(!commentEditKey){await store.createConnectionOnce('comment-edit-key',randomBytes(32).toString('hex'));commentEditKey=(await store.connection('comment-edit-key')).payload;}
 const cookieValue=(req,name)=>req.get('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith(name+'='))?.slice(name.length+1);
@@ -396,4 +398,6 @@ app.use((err,req,res,next)=>{
   fail(res,500,'Something went wrong. Please try again.');
 });
 const server=app.listen(Number(process.env.PORT||3001),process.env.HOST||'127.0.0.1',()=>console.log(`Pipelife review listening on ${server.address().port}`));
+process.on('unhandledRejection',error=>console.error('Unhandled rejection:',error?.stack||error));
+process.on('uncaughtException',error=>{console.error('Uncaught exception:',error?.stack||error);process.exit(1);});
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>server.close(()=>{store.close();process.exit(0);}));
