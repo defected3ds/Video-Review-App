@@ -15,7 +15,7 @@ Uploads are limited to **95 MB** on Cloudflare (`MAX_UPLOAD_MB`), because Cloudf
 ## Cloudflare setup
 
 1. **Plan:** in the Cloudflare dashboard open **Workers & Pages → Plans** and choose **Workers Paid**.
-2. **Database:** open **Storage & Databases → D1 SQL Database → Create**, name it `pipelife-review`, and copy its **Database ID**. The app creates its tables on first start; no SQL needs to be run.
+2. **Database:** done. The D1 database `pipelife-review` (ID `b3d8c886-e4bc-43c1-9d1e-1b7b2bf7189e`, Western Europe) exists with its tables, and its ID is set in `wrangler.jsonc`.
 3. **Database token:** open **My Profile → API Tokens → Create Token → Create Custom Token**. Give it the permission **Account → D1 → Edit**, limited to this account. Copy the token (it is shown once).
 4. **Deploy** the Worker and container. Either:
    - **From the dashboard:** **Workers & Pages → Create → Import a repository**, choose this repository and branch, leave the build command empty and set the deploy command to `npx wrangler@4 deploy`; or
@@ -25,13 +25,12 @@ Uploads are limited to **95 MB** on Cloudflare (`MAX_UPLOAD_MB`), because Cloudf
    | Name | Type | Value |
    | --- | --- | --- |
    | `CLOUDFLARE_ACCOUNT_ID` | Text | 32-character account ID (R2 → Account Details) |
-   | `D1_DATABASE_ID` | Text | Database ID from step 2 |
    | `CLOUDFLARE_D1_TOKEN` | Secret | Token from step 3 |
    | `R2_ACCOUNT_ID` | Text | Same account ID |
    | `R2_ACCESS_KEY_ID` | Secret | R2 token Access Key ID |
    | `R2_SECRET_ACCESS_KEY` | Secret | R2 token Secret Access Key |
 
-   `R2_BUCKET_NAME` (`pipelife-videos`) and `MAX_UPLOAD_MB` (`95`) are already set in `wrangler.jsonc`. Do not add `SUPABASE_*` settings.
+   `D1_DATABASE_ID`, `R2_BUCKET_NAME` (`pipelife-videos`) and `MAX_UPLOAD_MB` (`95`) are already set in `wrangler.jsonc`. Do not add `SUPABASE_*` settings.
 6. Open `https://pipelife-video-review.<your-subdomain>.workers.dev`, create the workspace password (the D1 database starts empty), then open `/admin#storage` and choose **Check connection** to confirm R2.
 7. When the Cloudflare site works, **suspend the old Render service** (Render → pipelife-video-review → Settings → Suspend Web Service) so it stops sending failure emails.
 

@@ -10,6 +10,7 @@
   "keep_vars": true,
   "vars": {
     "MAX_UPLOAD_MB": "95",
+    "D1_DATABASE_ID": "b3d8c886-e4bc-43c1-9d1e-1b7b2bf7189e",
     "R2_BUCKET_NAME": "pipelife-videos"
   },
   "containers": [

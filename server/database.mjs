@@ -107,7 +107,15 @@ export function d1Database({accountId, databaseId, token, fetcher = fetch, apiBa
   const base=new URL(apiBase);
   if(base.protocol!=='https:'&&!(allowLocal&&base.hostname==='127.0.0.1'))throw new Error('The D1 API requires HTTPS.');
   const endpoint=new URL(`/client/v4/accounts/${accountId}/d1/database/${databaseId}/query`,base);
-  async function query(sql, params = []) {
+  // The query API takes parameters as strings: send numbers as text (column affinity converts them back)
+  // and write NULL into the statement itself. The app's SQL has no '?' inside string literals.
+  const bindable=(sql,params)=>{
+    let index=0;const values=[];
+    const text=sql.replace(/\?/g,()=>{const value=params[index++];if(value===null||value===undefined)return 'NULL';values.push(String(value));return '?';});
+    return {sql:text,params:values};
+  };
+  async function query(rawSql, rawParams = []) {
+    const {sql,params}=bindable(rawSql,rawParams);
     const response=await fetcher(endpoint,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(params.length?{sql,params}:{sql}),signal:AbortSignal.timeout(15000)}).catch(error=>{throw Object.assign(new Error(`Cloudflare D1 is unreachable (${error.cause?.code||error.name}).`),{status:503});});
     const body=await response.json().catch(()=>null);
     if(!response.ok||!body?.success) {

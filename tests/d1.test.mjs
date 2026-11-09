@@ -25,6 +25,7 @@ async function fakeD1() {
     try{
       const statements=sql.split(';').map(s=>s.trim()).filter(Boolean);
       if(statements.length>1&&params.length)throw new Error('params with multiple statements');
+      if(!params.every(value=>typeof value==='string'))throw new Error('params must be strings');
       const result=statements.map(statement=>{
         const prepared=db.prepare(statement);
         if(/^(SELECT|PRAGMA)|RETURNING/i.test(statement))return {results:prepared.all(...params),success:true,meta:{changes:0}};
